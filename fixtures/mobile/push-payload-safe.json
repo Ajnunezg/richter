@@ -1,0 +1,6 @@
+{
+  "type": "important_event",
+  "event_id": "evt_001",
+  "importance": 92,
+  "category": "run_failed"
+}

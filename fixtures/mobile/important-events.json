@@ -1,0 +1,24 @@
+[
+  {
+    "event_id": "evt_001",
+    "type": "run_failed",
+    "importance": 92,
+    "repo_id": "repo_01",
+    "run_id": "run_42",
+    "title": "pnpm test failed in packages/api",
+    "summary": "First failure: auth token refresh test timed out",
+    "occurred_at": "2026-05-04T18:42:00Z",
+    "requires_action": false
+  },
+  {
+    "event_id": "evt_002",
+    "type": "resource_pressure",
+    "importance": 78,
+    "repo_id": "repo_01",
+    "run_id": null,
+    "title": "CPU pressure at 94%",
+    "summary": "Multiple heavy builds competing for CPU — consider pausing one agent",
+    "occurred_at": "2026-05-04T18:43:00Z",
+    "requires_action": true
+  }
+]

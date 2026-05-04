@@ -1,0 +1,9 @@
+{
+  "pairing_id": "pair_abc123",
+  "pairing_secret": "secret_xyz",
+  "server_pubkey_sha256": "sha256:abcdef1234567890",
+  "daemon_id": "daemon_richter_01",
+  "host": "192.168.1.100",
+  "port": 9777,
+  "expires_in_seconds": 120
+}

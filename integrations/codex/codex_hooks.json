@@ -1,0 +1,13 @@
+{
+  "_comment": "Richter hook configuration for Codex CLI. Install with: richter install hooks --agent codex",
+  "_docs": {
+    "pre_tool_execution": "Runs before each tool execution in Codex. The ${TOOL_NAME} and ${TOOL_ARGS} variables are populated by the Codex hook system. Commands are routed through Richter for deduplication, caching, and resource scheduling. If Richter daemon is offline, commands pass through directly."
+  },
+  "hooks": {
+    "pre_tool_execution": [
+      {
+        "command": "richter run --shim-name \"${TOOL_NAME}\" -- ${TOOL_ARGS}"
+      }
+    ]
+  }
+}

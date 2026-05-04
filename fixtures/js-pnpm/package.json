@@ -1,0 +1,7 @@
+{
+  "name": "fixture-js",
+  "private": true,
+  "scripts": {
+    "test": "echo 'Running pnpm test...' && sleep 2 && echo '✓ All tests passed' && exit 0"
+  }
+}

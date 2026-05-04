@@ -1,0 +1,332 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1000001 /* RichterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
+		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
+		A1000003 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
+		A1000004 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000004; };
+		A1000005 /* Run.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000005; };
+		A1000006 /* Agent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000006; };
+		A1000007 /* Repo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000007; };
+		A1000008 /* Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000008; };
+		A1000009 /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000009; };
+		A1000010 /* NowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
+		A1000011 /* ReposView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
+		A1000012 /* RunsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
+		A1000013 /* AgentsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000013; };
+		A1000014 /* EventsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000014; };
+		A1000015 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000015; };
+		A1000016 /* DoctorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000016; };
+		A1000019 /* DecisionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000017; };
+		A1000020 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000018; };
+		A1000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A3000001; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A2000001 /* RichterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichterApp.swift; sourceTree = "<group>"; };
+		A2000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A2000003 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		A2000004 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		A2000005 /* Run.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Run.swift; sourceTree = "<group>"; };
+		A2000006 /* Agent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Agent.swift; sourceTree = "<group>"; };
+		A2000007 /* Repo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Repo.swift; sourceTree = "<group>"; };
+		A2000008 /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
+		A2000009 /* DaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonClient.swift; sourceTree = "<group>"; };
+		A2000010 /* NowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowView.swift; sourceTree = "<group>"; };
+		A2000011 /* ReposView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposView.swift; sourceTree = "<group>"; };
+		A2000012 /* RunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsView.swift; sourceTree = "<group>"; };
+		A2000013 /* AgentsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsView.swift; sourceTree = "<group>"; };
+		A2000014 /* EventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventsView.swift; sourceTree = "<group>"; };
+		A2000015 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A2000016 /* DoctorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoctorView.swift; sourceTree = "<group>"; };
+		A2000017 /* DecisionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionsView.swift; sourceTree = "<group>"; };
+		A2000018 /* SetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupView.swift; sourceTree = "<group>"; };
+		A3000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A4000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A5000001 /* RichterApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RichterApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B1000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C1000001 = {
+			isa = PBXGroup;
+			children = (
+				C1000002 /* RichterApp */,
+				C1000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C1000002 /* RichterApp */ = {
+			isa = PBXGroup;
+			children = (
+				A2000001 /* RichterApp.swift */,
+				A2000002 /* ContentView.swift */,
+				A2000003 /* MenuBarController.swift */,
+				C1000004 /* Models */,
+				C1000005 /* Services */,
+				C1000006 /* Views */,
+				A3000001 /* Assets.xcassets */,
+				A4000001 /* Info.plist */,
+			);
+			path = RichterApp;
+			sourceTree = "<group>";
+		};
+		C1000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A5000001 /* RichterApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C1000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A2000004 /* AppState.swift */,
+				A2000005 /* Run.swift */,
+				A2000006 /* Agent.swift */,
+				A2000007 /* Repo.swift */,
+				A2000008 /* Event.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		C1000005 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A2000009 /* DaemonClient.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C1000006 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A2000010 /* NowView.swift */,
+				A2000011 /* ReposView.swift */,
+				A2000012 /* RunsView.swift */,
+				A2000013 /* AgentsView.swift */,
+				A2000014 /* EventsView.swift */,
+				A2000015 /* SettingsView.swift */,
+				A2000016 /* DoctorView.swift */,
+				A2000017 /* DecisionsView.swift */,
+				A2000018 /* SetupView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D1000001 /* RichterApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1000001;
+			buildPhases = (
+				D1000002 /* Sources */,
+				B1000001 /* Frameworks */,
+				D1000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RichterApp;
+			productName = RichterApp;
+			productReference = A5000001 /* RichterApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F1000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1520;
+				LastUpgradeCheck = 1520;
+				TargetAttributes = {
+					D1000001 = {
+						CreatedOnToolsVersion = 15.2;
+					};
+				};
+			};
+			buildConfigurationList = E1000002;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C1000001;
+			productRefGroup = C1000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D1000001 /* RichterApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D1000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000017 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D1000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000001 /* RichterApp.swift in Sources */,
+				A1000002 /* ContentView.swift in Sources */,
+				A1000003 /* MenuBarController.swift in Sources */,
+				A1000004 /* AppState.swift in Sources */,
+				A1000005 /* Run.swift in Sources */,
+				A1000006 /* Agent.swift in Sources */,
+				A1000007 /* Repo.swift in Sources */,
+				A1000008 /* Event.swift in Sources */,
+				A1000009 /* DaemonClient.swift in Sources */,
+				A1000010 /* NowView.swift in Sources */,
+				A1000011 /* ReposView.swift in Sources */,
+				A1000012 /* RunsView.swift in Sources */,
+				A1000013 /* AgentsView.swift in Sources */,
+				A1000014 /* EventsView.swift in Sources */,
+				A1000015 /* SettingsView.swift in Sources */,
+				A1000016 /* DoctorView.swift in Sources */,
+				A1000019 /* DecisionsView.swift in Sources */,
+				A1000020 /* SetupView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		E0000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = RichterApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imaginethat.richter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		E0000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				INFOPLIST_FILE = RichterApp/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imaginethat.richter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E0000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = RichterApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.imaginethat.richter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		E0000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = RichterApp/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.imaginethat.richter;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E1000001 /* Build configuration list for PBXNativeTarget "RichterApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0000003 /* Debug */,
+				E0000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E1000002 /* Build configuration list for PBXProject "RichterApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0000001 /* Debug */,
+				E0000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = F1000001 /* Project object */;
+}

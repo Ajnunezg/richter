@@ -1,0 +1,78 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/richter-core",
+    "crates/richter-daemon",
+    "crates/richter-cli",
+    "crates/richter-mcp",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ajnunezg/richter"
+authors = ["Alberto Nunez <dewclaw@hey.com>"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Core
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+bytes = "1"
+futures = "0.3"
+async-trait = "0.1"
+parking_lot = "0.12"
+dashmap = "6"
+once_cell = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+
+# Serialization
+toml = "0.8"
+rmp-serde = "1"
+
+# Networking
+tokio-stream = "0.1"
+hyper = { version = "1", features = ["full"] }
+http-body-util = "0.1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+axum = { version = "0.8", features = ["macros"] }
+
+# Crypto / hashing
+sha2 = "0.10"
+blake3 = "1"
+hex = "0.4"
+
+# Process
+nix = { version = "0.29", features = ["process", "signal"] }
+
+# FS
+notify = { version = "7", features = ["macos_fsevent"] }
+walkdir = "2"
+tempfile = "3"
+flate2 = "1"
+
+# Regex / parsing
+regex = "1"
+nom = "7"
+
+# MCP
+rmcp = "0.5"
+
+# Sysinfo
+sysinfo = "0.32"

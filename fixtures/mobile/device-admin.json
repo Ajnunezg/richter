@@ -1,0 +1,8 @@
+{
+  "id": "mob_002",
+  "display_name": "Alberto's iPad",
+  "platform": "ios",
+  "scopes": ["read_now", "read_runs", "read_events", "read_logs", "cancel_runs", "approve_high_risk", "admin_mobile_devices"],
+  "created_at": "2026-05-04T18:30:00Z",
+  "revoked_at": null
+}

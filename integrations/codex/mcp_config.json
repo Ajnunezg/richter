@@ -1,0 +1,14 @@
+{
+  "_comment": "MCP server configuration for Codex CLI / Codex IDE. Install with: richter install mcp --agent codex",
+  "_docs": {
+    "description": "Connects Codex to the Richter MCP server over stdio. The server exposes tools (status, repo status, run-or-join, active runs, events, claims, decisions, run summaries) and resources (global status, per-repo status, per-run summary, per-agent inbox).",
+    "transport": "stdio — JSON-RPC messages over stdin/stdout. Never write logs to stdout in stdio mode; all diagnostic output goes to stderr."
+  },
+  "mcpServers": {
+    "richter": {
+      "command": "richter",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "env": {}
+    }
+  }
+}

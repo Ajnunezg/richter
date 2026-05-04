@@ -1,0 +1,8 @@
+{
+  "type": "important_event",
+  "event_id": "evt_003",
+  "importance": 95,
+  "category": "run_failed",
+  "title": "🚫 REJECTED: Raw log content in push payload",
+  "body": "🚫 REJECTED: Command output in push payload"
+}

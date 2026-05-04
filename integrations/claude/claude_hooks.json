@@ -1,0 +1,28 @@
+{
+  "_comment": "Richter hooks for Claude Code. Install with: richter install hooks --agent claude",
+  "_docs": {
+    "PreToolUse_Bash": "Intercepts Bash tool calls before execution. Routes the command through Richter for deduplication, caching, and resource scheduling. Uses the shim name from $TOOL_NAME so Richter can classify and fingerprint the command properly.",
+    "PostToolUse_Bash": "Reports the run outcome back to Richter after the Bash command completes. Uses $RICHTER_RUN_ID set by the PreToolUse hook to associate the report with the correct run. Output is suppressed (> /dev/null) to avoid polluting the agent's context.",
+    "Notification": "Shows a brief Richter status line in the agent's context on each notification event. Uses --brief mode for a one-line summary that won't disrupt the agent's workflow."
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "richter run --shim-name \"$TOOL_NAME\" -- \"$@\" 2>&1"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "command": "richter run --report --run-id \"$RICHTER_RUN_ID\" 2>&1 > /dev/null"
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "command": "richter status --brief"
+      }
+    ]
+  }
+}

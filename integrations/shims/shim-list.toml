@@ -1,0 +1,260 @@
+# Richter Shim List
+# =================
+# Complete catalog of all supported shim tools. Each entry maps a tool name
+# to its category, default cache/dedupe policy, and resource class.
+#
+# Categories:
+#   build          - Compilation/linking (cargo build, go build, xcodebuild)
+#   test           - Test runners (pytest, cargo test, jest, go test)
+#   lint           - Static analysis (clippy, eslint, ruff)
+#   typecheck      - Type checking (tsc, mypy)
+#   format         - Code formatters (prettier, rustfmt)
+#   install        - Package/dependency installation (npm install, pip install)
+#   dev-server     - Development servers and watchers (npm run dev, cargo watch)
+#   migration      - Database migrations
+#   destructive    - Potentially destructive commands (rm, git push --force)
+#   unknown        - Unclassified commands (pass through by default)
+#
+# Resource classes:
+#   heavy_build    - CPU/memory-intensive build operations
+#   heavy_test     - CPU/memory-intensive test suites
+#   light_lint     - Fast lint/typecheck operations
+#   light_install  - Dependency installation (usually I/O-bound)
+#   dev_server     - Long-running development server processes
+#   unknown        - Default for unclassified commands
+#
+# Policy defaults:
+#   cache: true    - Safe to cache; fingerprint must match exactly
+#   cache: false   - Never cache (non-deterministic or destructive)
+#   dedupe: true   - Safe to deduplicate when fingerprint matches
+#   dedupe: false  - Never deduplicate (interactive, non-hermetic)
+
+[[shims]]
+
+# ---------------------------------------------------------------------------
+# JavaScript / TypeScript ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.npm]
+category = "install"
+cache = false
+dedupe = false
+resource_class = "light_install"
+description = "Node package manager"
+
+[shims.pnpm]
+category = "install"
+cache = false
+dedupe = false
+resource_class = "light_install"
+description = "Fast, disk-space efficient package manager"
+
+[shims.yarn]
+category = "install"
+cache = false
+dedupe = false
+resource_class = "light_install"
+description = "Yarn package manager"
+
+[shims.bun]
+category = "install"
+cache = false
+dedupe = false
+resource_class = "light_install"
+description = "Bun JavaScript runtime and package manager"
+
+[shims.node]
+category = "unknown"
+cache = false
+dedupe = false
+resource_class = "unknown"
+description = "Node.js runtime — pass through by default"
+
+[shims.npx]
+category = "unknown"
+cache = false
+dedupe = false
+resource_class = "unknown"
+description = "Node package runner — pass through by default"
+
+[shims.deno]
+category = "unknown"
+cache = false
+dedupe = false
+resource_class = "unknown"
+description = "Deno runtime"
+
+[shims.tsc]
+category = "typecheck"
+cache = true
+dedupe = true
+resource_class = "light_lint"
+description = "TypeScript compiler (type checking only)"
+
+[shims.eslint]
+category = "lint"
+cache = true
+dedupe = true
+resource_class = "light_lint"
+description = "ESLint JavaScript/TypeScript linter"
+
+[shims.jest]
+category = "test"
+cache = true
+dedupe = true
+resource_class = "heavy_test"
+description = "Jest test runner"
+
+[shims.vitest]
+category = "test"
+cache = true
+dedupe = true
+resource_class = "heavy_test"
+description = "Vitest test runner"
+
+[shims.playwright]
+category = "test"
+cache = true
+dedupe = true
+resource_class = "heavy_test"
+description = "Playwright end-to-end test runner"
+
+[shims.turbo]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Turborepo build orchestrator"
+
+[shims.nx]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Nx build system"
+
+# ---------------------------------------------------------------------------
+# Rust ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.cargo]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Cargo — Rust package manager and build tool"
+
+# ---------------------------------------------------------------------------
+# Go ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.go]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Go toolchain"
+
+# ---------------------------------------------------------------------------
+# Python ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.python]
+category = "unknown"
+cache = false
+dedupe = false
+resource_class = "unknown"
+description = "Python interpreter — pass through by default"
+
+[shims.pytest]
+category = "test"
+cache = true
+dedupe = true
+resource_class = "heavy_test"
+description = "pytest test runner"
+
+[shims.uv]
+category = "install"
+cache = false
+dedupe = false
+resource_class = "light_install"
+description = "uv — fast Python package installer and resolver"
+
+[shims.ruff]
+category = "lint"
+cache = true
+dedupe = true
+resource_class = "light_lint"
+description = "Ruff — fast Python linter and formatter"
+
+# ---------------------------------------------------------------------------
+# C/C++ ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.make]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "GNU Make"
+
+[shims.cmake]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "CMake build system"
+
+[shims.ninja]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Ninja build system"
+
+# ---------------------------------------------------------------------------
+# Apple ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.xcodebuild]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "xcodebuild — Xcode command-line build tool"
+
+[shims.swift]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Swift compiler and package manager"
+
+# ---------------------------------------------------------------------------
+# Java / Kotlin ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.gradle]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Gradle build tool"
+
+[shims.mvn]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Maven build tool"
+
+# ---------------------------------------------------------------------------
+# Bazel ecosystem
+# ---------------------------------------------------------------------------
+
+[shims.bazel]
+category = "build"
+cache = true
+dedupe = true
+resource_class = "heavy_build"
+description = "Bazel build system"

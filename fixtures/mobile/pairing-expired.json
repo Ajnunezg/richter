@@ -1,0 +1,6 @@
+{
+  "pairing_id": "pair_expired",
+  "expires_at": "2026-05-04T17:00:00Z",
+  "claimed": false,
+  "status": "expired"
+}

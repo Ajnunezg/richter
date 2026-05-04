@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Richter Mobile",
+    "slug": "richter-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.imaginethat.richter.mobile",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Richter Mobile discovers your Mac on your local network to display agent activity and important events.",
+        "NSBonjourServices": ["_richter._tcp"],
+        "NSCameraUsageDescription": "Camera is used to scan the QR pairing code displayed on your Mac.",
+        "NSFaceIDUsageDescription": "Face ID confirms your identity before approving high-risk actions."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "package": "com.imaginethat.richter.mobile",
+      "permissions": ["CAMERA", "POST_NOTIFICATIONS"]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-local-authentication",
+      ["expo-camera", { "cameraPermission": "Allow Richter Mobile to scan the QR pairing code." }],
+      ["expo-notifications", { "icon": "./assets/icon.png", "color": "#6366f1" }]
+    ],
+    "experiments": { "typedRoutes": true },
+    "scheme": "richter"
+  }
+}

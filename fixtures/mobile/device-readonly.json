@@ -1,0 +1,8 @@
+{
+  "id": "mob_001",
+  "display_name": "Alberto's iPhone",
+  "platform": "ios",
+  "scopes": ["read_now", "read_runs", "read_events"],
+  "created_at": "2026-05-04T18:00:00Z",
+  "revoked_at": null
+}

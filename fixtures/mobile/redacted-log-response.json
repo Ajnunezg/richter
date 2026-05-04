@@ -1,0 +1,6 @@
+{
+  "run_id": "run_42",
+  "log": "Running tests...\nPASS test_auth\nFAIL test_refresh: [REDACTED: API_KEY]\nTests: 9 passed, 1 failed",
+  "redacted_patterns": ["API_KEY"],
+  "original_hash": "sha256:log_hash_abc"
+}

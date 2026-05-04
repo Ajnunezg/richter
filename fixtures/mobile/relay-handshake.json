@@ -1,0 +1,8 @@
+{
+  "relay_id": "relay_01",
+  "channel_id": "ch_abc123",
+  "daemon_id": "daemon_richter_01",
+  "device_id": "mob_001",
+  "established_at": "2026-05-04T18:45:00Z",
+  "metadata_only": true
+}

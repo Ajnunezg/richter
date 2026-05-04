@@ -1,0 +1,7 @@
+Build started at 10:23:45
+Using API key: sk-proj-abc123def456ghijklmnopqrstuvwxyz7890
+Setting OPENAI_API_KEY=sk-ant-api03-xxxxxxxxxxxxxx-xxxxxxxxxxxxxx
+Bearer token: ghp_1a2b3c4d5e6f7g8h9i0j
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+DATABASE_URL=postgresql://user:password123@db.example.com:5432/mydb
+Build completed successfully.
