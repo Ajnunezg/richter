@@ -291,6 +291,12 @@ pub struct RunOrJoinRequest {
     /// Resource class override.
     #[serde(default = "default_resource_class")]
     pub resource_class: String,
+    /// Skip destructive preview gate.
+    #[serde(default)]
+    pub force: bool,
+    /// Dry-run preview mode.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 fn default_repo() -> String {
@@ -410,6 +416,8 @@ async fn run_or_join_handler(
         env: req.env,
         classification: req.classification,
         resource_class: req.resource_class,
+        force: req.force,
+        preview: req.preview,
         ..Default::default()
     };
 
@@ -618,6 +626,8 @@ async fn preview_handler(
         env: req.env,
         classification: req.classification,
         resource_class: req.resource_class,
+        force: req.force,
+        preview: req.preview,
         ..Default::default()
     }).await;
 
@@ -641,13 +651,25 @@ async fn preview_handler(
 }
 
 
-/// GET /budget — model call budget status.
+/// GET /budget — model call budget status with warnings.
 async fn budget_handler(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
     let budget = state.model_call_budget.lock();
+    let remaining = budget.remaining();
+    let circuit_open = remaining == 0;
+    let warnings: Vec<String> = if circuit_open {
+        vec!["Budget exhausted — circuit breaker open. Model calls rejected until next window.".into()]
+    } else if remaining <= budget.max_calls_per_minute / 5 {
+        vec![format!("80%+ consumed — {remaining} calls remaining this minute")]
+    } else {
+        vec![]
+    };
     Json(serde_json::json!({
-        "remaining": budget.remaining(),
+        "remaining_per_minute": remaining,
         "max_per_minute": budget.max_calls_per_minute,
-        "circuit_open": budget.remaining() == 0,
+        "circuit_open": circuit_open,
+        "warnings": warnings,
+        "monthly_spend_usd_estimate": null,
+        "providers": [],
     }))
 }
 

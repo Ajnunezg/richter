@@ -52,10 +52,14 @@ pub struct RichterConfig {
     /// Plugin manifests.
     #[serde(default)]
     pub plugins: Vec<PluginConfig>,
+    #[serde(default)]
+    pub templates: Vec<TemplateConfig>,
 
     /// Data retention limits (in days).
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub parsers: Vec<ParserConfig>,
 
     /// General settings.
     #[serde(default)]
@@ -74,7 +78,9 @@ impl Default for RichterConfig {
             redaction: RedactionConfig::default(),
             hooks: HooksConfig::default(),
             plugins: Vec::new(),
+            templates: Vec::new(),
             retention: RetentionConfig::default(),
+            parsers: Vec::new(),
             general: GeneralConfig::default(),
         }
     }
@@ -322,6 +328,23 @@ impl Default for HooksConfig {
 // Plugin config
 // ---------------------------------------------------------------------------
 
+/// Run template configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateConfig {
+    pub name: String,
+    pub steps: Vec<TemplateStep>,
+    #[serde(default)]
+    pub continue_on_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateStep {
+    pub command: String,
+    #[serde(default = "default_template_class")]
+    pub class: String,
+}
+fn default_template_class() -> String { "unknown".into() }
+
 /// Plugin manifest configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
@@ -342,6 +365,18 @@ pub struct PluginConfig {
 // ---------------------------------------------------------------------------
 // Retention config
 // ---------------------------------------------------------------------------
+
+/// Custom parser DSL configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParserConfig {
+    pub name: String,
+    pub match_output: String,
+    pub extract_failures: Option<String>,
+    pub extract_summary: Option<String>,
+    #[serde(default = "default_importance")]
+    pub importance: u8,
+}
+fn default_importance() -> u8 { 75 }
 
 /// Data retention configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

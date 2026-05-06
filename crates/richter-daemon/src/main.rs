@@ -206,14 +206,24 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Shutting down Richter daemon — entering drain mode…");
 
-    // Drain: cancel pending API work, reconcile orphans
+    // Drain: wait up to 30s for active runs to finish gracefully
+    let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let active = shutdown_run_manager.active_runs();
+        if active.is_empty() || tokio::time::Instant::now() >= drain_deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
     api_handle.abort();
 
-    // Orphan reconciliation: log any runs still active
+    // Orphan reconciliation: kill remaining runs, mark as orphaned in DB
     let active_runs = shutdown_run_manager.active_runs();
     if !active_runs.is_empty() {
         info!("Reconciling {} orphaned run(s)…", active_runs.len());
+        let now = chrono::Utc::now().to_rfc3339();
         for run_id in &active_runs {
+            let _ = db.update_run_status(run_id, "orphaned", Some(-1), None, Some(&now), None);
             if let Err(e) = shutdown_supervisor.kill_run(run_id).await {
                 tracing::warn!("Failed to kill orphaned run {}: {}", run_id, e);
             }

@@ -452,8 +452,11 @@ async fn status_handler(State(state): State<Arc<MobileGatewayState>>) -> Json<se
     }))
 }
 
-async fn repos_handler() -> Json<Vec<serde_json::Value>> {
-    Json(vec![])
+async fn repos_handler(State(st): State<Arc<MobileGatewayState>>) -> Json<Vec<serde_json::Value>> {
+    let repos: Vec<serde_json::Value> = st.run_manager.as_ref().map(|rm| {
+        rm.active_runs().iter().map(|id| serde_json::json!({"run_id": id})).collect()
+    }).unwrap_or_default();
+    Json(repos)
 }
 
 async fn runs_handler(State(state): State<Arc<MobileGatewayState>>) -> Json<Vec<MobileRun>> {
@@ -477,15 +480,19 @@ async fn runs_handler(State(state): State<Arc<MobileGatewayState>>) -> Json<Vec<
     }
 }
 
-async fn agents_handler() -> Json<Vec<serde_json::Value>> {
-    Json(vec![])
+async fn agents_handler(State(st): State<Arc<MobileGatewayState>>) -> Json<Vec<serde_json::Value>> {
+    let agents: Vec<serde_json::Value> = st.run_manager.as_ref().map(|rm| {
+        rm.active_runs().iter().map(|id| serde_json::json!({"agent_id": id, "status": "active"})).collect()
+    }).unwrap_or_default();
+    Json(agents)
 }
 
-async fn important_events_handler() -> Json<Vec<MobileEvent>> {
-    Json(vec![])
+async fn important_events_handler(State(st): State<Arc<MobileGatewayState>>) -> Json<Vec<MobileEvent>> {
+    let top: Vec<MobileEvent> = collect_top_event(&st.event_bus).into_iter().collect();
+    Json(top)
 }
 
-async fn approvals_handler() -> Json<Vec<ApprovalRequest>> {
+async fn approvals_handler(State(_st): State<Arc<MobileGatewayState>>) -> Json<Vec<ApprovalRequest>> {
     Json(vec![])
 }
 

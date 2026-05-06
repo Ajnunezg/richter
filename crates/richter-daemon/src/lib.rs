@@ -13,3 +13,5 @@ pub mod scheduler;
 pub mod supervisor;
 pub mod watcher;
 pub mod webhooks;
+
+pub mod plugin_runtime;

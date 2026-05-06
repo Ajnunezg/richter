@@ -74,6 +74,17 @@ impl CommandFingerprint {
         }
     }
 
+    /// Build a cross-worktree cache key (excludes worktree path).
+    pub fn cross_worktree_key(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.command.as_bytes());
+        hasher.update(self.command_hash.as_bytes());
+        hasher.update(self.env_hash.as_bytes());
+        hasher.update(self.classification.as_bytes());
+        hex::encode(hasher.finalize())
+    }
+
     /// Build a cache key string from this fingerprint (for DB lookups).
     pub fn cache_key(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -96,6 +107,24 @@ impl CommandFingerprint {
     /// Check if this fingerprint is a superset of another.
     pub fn is_superset_of(&self, other: &CommandFingerprint) -> bool {
         other.is_subset_of(self)
+    }
+
+    /// Extract test target from command for subset/superset analysis.
+    /// Returns the package name, test path, or filter expression.
+    pub fn test_target(&self) -> Option<String> {
+        let cmd = &self.command;
+        for (prefix, marker) in [(" -p ", ""), (" --package ", ""),
+                                  (" pytest ", ".py"), (" jest ", ".test."),
+                                  (" vitest ", ".test.")] {
+            if let Some(pos) = cmd.find(prefix) {
+                let rest = &cmd[pos + prefix.len()..];
+                let word = rest.split_whitespace().next()?;
+                if marker.is_empty() || word.contains(marker) {
+                    return Some(word.to_string());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -280,7 +309,16 @@ impl RunManager {
             return Ok(outcome);
         }
 
-        // 1. Pass-through destructive commands
+        // 1. Destructive command preview gate
+        if self.is_destructive(&spec.command) && !spec.force && !spec.preview {
+            info!("Destructive command blocked — preview required: {}", spec.command);
+            if let Some(msg) = self.generate_preview(&spec.command) {
+                return Ok(RunOutcome::Rejected {
+                    reason: format!("DESTRUCTIVE: {}. Re-run with --force to execute.", msg),
+                });
+            }
+            // Fall through to execute
+        }
         if self.is_destructive(&spec.command) {
             info!("Pass-through destructive command: {}", spec.command);
                         let outcome = self.start_new(spec.clone()).await?;
@@ -342,10 +380,17 @@ impl RunManager {
             }
         }
 
-        // 3b. Check persistent DB cache
+        // 3b. Check persistent DB cache (includes cross-worktree)
         if let Some(db) = self.db.as_ref() {
             let cache_key = fingerprint.cache_key();
-            if let Ok(Some(entry)) = db.get_cache_entry(&cache_key) {
+            let mut entry = db.get_cache_entry(&cache_key).ok().flatten();
+            if entry.is_none() {
+                let cross_key = fingerprint.cross_worktree_key();
+                if cross_key != cache_key {
+                    entry = db.get_cache_entry(&cross_key).ok().flatten();
+                }
+            }
+            if let Some(entry) = entry {
                 self.cache_hits_today.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 debug!(
                     "DB cache hit for fingerprint {hash}",
@@ -503,6 +548,8 @@ impl RunManager {
             .insert(fingerprint.clone(), active.clone());
         self.active_by_id.insert(run_id.clone(), active);
 
+        let repo_for_cache = spec.repo.clone();
+        let repo_for_cache = spec.repo.clone();
         let actual_run_id = self.supervisor.spawn(spec).await?;
 
         // Spawn completion hook to cache results
@@ -520,6 +567,15 @@ impl RunManager {
                 if let Some(code) = supervisor.exit_code(&run_id_for_cache) {
                     let output = supervisor.get_output(&run_id_for_cache).unwrap_or_default();
 
+                    let changed: Vec<String> = std::process::Command::new("git")
+                        .args(["diff", "--name-only", "HEAD"])
+                        .current_dir(&repo_for_cache)
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.lines().map(String::from).collect())
+                        .unwrap_or_default();
+
                     cache.insert(
                         fingerprint_for_cache.clone(),
                         CachedResult {
@@ -528,7 +584,7 @@ impl RunManager {
                             exit_code: code,
                             output: output.clone(),
                             cached_at: Utc::now(),
-                            changed_files: Vec::new(),
+                            changed_files: changed,
                         },
                     );
 
@@ -583,6 +639,21 @@ impl RunManager {
             }
         }
         None
+    }
+
+    fn generate_preview(&self, command: &str) -> Option<String> {
+        let lower = command.to_lowercase();
+        if lower.contains("rm -rf") {
+            Some(format!("would recursively delete: {}", command))
+        } else if lower.contains("git push") && (lower.contains("-f") || lower.contains("--force")) {
+            Some("would force-push, overwriting remote history".into())
+        } else if lower.contains("drop ") || lower.contains("truncate ") {
+            Some("would drop/truncate database table(s)".into())
+        } else if lower.contains("terraform destroy") {
+            Some("would destroy Terraform-managed infrastructure".into())
+        } else {
+            None
+        }
     }
 
     fn is_destructive(&self, command: &str) -> bool {

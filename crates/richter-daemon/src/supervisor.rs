@@ -55,6 +55,10 @@ pub struct RunSpec {
     pub is_dirty: bool,
     /// Hash of lockfile contents (if present).
     pub lockfile_hash: Option<String>,
+    /// Skip destructive preview gate.
+    pub force: bool,
+    /// Dry-run preview mode.
+    pub preview: bool,
 }
 
 impl Default for RunSpec {
@@ -71,6 +75,8 @@ impl Default for RunSpec {
             head_sha: None,
             is_dirty: false,
             lockfile_hash: None,
+            force: false,
+            preview: false,
         }
     }
 }

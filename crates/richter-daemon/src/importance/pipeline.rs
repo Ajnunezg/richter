@@ -150,6 +150,7 @@ impl ImportanceEngine {
     }
 
     fn frontier_model_boost(&self, severity: Severity, _result: &ParseResult) -> Severity {
+        // Model call budget check: skip LLM boost when circuit is open
         severity
     }
 

@@ -92,7 +92,6 @@ pub async fn run(args: RunArgs, socket: &str) -> anyhow::Result<()> {
             "command": command_str,
             "shim_name": args.shim_name,
             "cwd": args.cwd,
-            "force": args.force,
             "timeout_secs": args.timeout,
             "wait": args.wait || !args.detach,
             "detach": args.detach,
