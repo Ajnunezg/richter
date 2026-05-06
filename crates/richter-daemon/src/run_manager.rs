@@ -255,9 +255,6 @@ impl RunManager {
             cache_ttl: Duration::from_secs(300),
         }
     }
-        }
-        manager
-    }
 
     /// Set the result cache TTL.
     pub fn with_cache_ttl(mut self, ttl: Duration) -> Self {
