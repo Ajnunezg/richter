@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_redact_openai_key() {
-        let input = "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz1234567890";
+        let input = "OPENAI_API_KEY=sk-proj-fake-openai-test-key-0000000000";
         let output = redact(input);
         assert!(output.contains(REDACTION_REPLACEMENT));
         assert!(!output.contains("sk-proj-"));
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_redact_anthropic_key() {
-        let input = "Using key: sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890";
+        let input = "Using key: sk-ant-api03-fake-anthropic-key-0000000000";
         let output = redact(input);
         assert!(output.contains(REDACTION_REPLACEMENT));
     }
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_contains_secrets() {
         assert!(contains_secrets(
-            "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+            "sk-proj-fake-openai-test-key-0000000000"
         ));
         assert!(!contains_secrets("Hello, world!"));
     }
@@ -255,10 +255,10 @@ mod tests {
     fn test_redact_json_nested() {
         let input = serde_json::json!({
             "config": {
-                "api_key": "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890",
+                "api_key": "sk-proj-fake-openai-test-key-0000000000",
                 "normal_field": "hello"
             },
-            "items": ["safe", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890"]
+            "items": ["safe", "sk-ant-api03-fake-anthropic-key-0000000000"]
         });
         let output = redact_json(&input);
         let config = output.get("config").unwrap();
