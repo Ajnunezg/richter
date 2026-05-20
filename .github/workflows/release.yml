@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: Build & Release (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      - name: Build release binaries
+        run: |
+          cargo build --release -p richter-cli -p richter-daemon
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          shasum -a 256 target/release/richter > richter-darwin-arm64.sha256
+          shasum -a 256 target/release/richterd >> richter-darwin-arm64.sha256
+          cat richter-darwin-arm64.sha256
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          files: |
+            target/release/richter
+            target/release/richterd
+            richter-darwin-arm64.sha256
+          body: |
+            ## Richter ${{ steps.version.outputs.VERSION }}
+
+            ### Binaries
+
+            | Binary | Architecture | OS |
+            |--------|-------------|-----|
+            | `richter` | arm64 (Apple Silicon) | macOS |
+            | `richterd` | arm64 (Apple Silicon) | macOS |
+
+            ### Verification
+
+            Verify downloads with the SHA256 checksums in `richter-darwin-arm64.sha256`:
+
+            ```bash
+            shasum -a 256 -c richter-darwin-arm64.sha256
+            ```
+
+            ### Installation
+
+            ```bash
+            # Extract and move to PATH
+            tar xzf richter-darwin-arm64.tar.gz
+            chmod +x richter richterd
+            mv richter richterd /usr/local/bin/
+            ```

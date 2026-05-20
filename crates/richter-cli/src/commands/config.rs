@@ -63,8 +63,8 @@ async fn get_config(socket: &str, key: &str) -> anyhow::Result<()> {
 
 async fn set_config(socket: &str, key: &str, value: &str) -> anyhow::Result<()> {
     let client = LocalClient::new(socket);
-    let v: serde_json::Value = serde_json::from_str(value)
-        .unwrap_or(serde_json::Value::String(value.to_string()));
+    let v: serde_json::Value =
+        serde_json::from_str(value).unwrap_or(serde_json::Value::String(value.to_string()));
     let req = serde_json::json!({
         "method": "settings_update",
         "params": { "settings": { key: v } }

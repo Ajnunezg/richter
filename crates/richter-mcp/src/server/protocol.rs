@@ -105,8 +105,10 @@ impl<T: Transport> McpServer<T> {
             version: config.version.clone(),
             #[cfg(unix)]
             daemon_client: {
-                let socket = std::env::var("RICHTER_SOCKET")
-                    .unwrap_or_else(|_| "/tmp/richter.sock".to_string());
+                let socket = std::env::var("RICHTER_SOCKET").unwrap_or_else(|_| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                    format!("{home}/.richter/daemon.sock")
+                });
                 let client = crate::daemon::DaemonApiClient::new(&socket);
                 if client.is_reachable() {
                     Some(client)
@@ -484,13 +486,12 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    #[allow(dead_code)]
     async fn send_and_recv_one(
         server: &mut McpServer<InProcessTransport>,
         peer: &InProcessPeer,
         request: JsonRpcEnvelope,
     ) -> JsonRpcEnvelope {
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
         // We need a clone of peer to recv. The peer isn't Clone currently.
@@ -511,7 +512,7 @@ mod tests {
                 "clientInfo": { "name": "test-client", "version": "1.0" }
             }),
         );
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         // Process the message.
         let msg = server.transport.recv().await.unwrap().unwrap();
@@ -530,7 +531,7 @@ mod tests {
         let (mut server, peer) = create_test_server();
 
         let request = make_request(2, "tools/list", serde_json::json!({}));
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -551,7 +552,7 @@ mod tests {
         let (mut server, peer) = create_test_server();
 
         let request = make_request(3, "resources/list", serde_json::json!({}));
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -575,7 +576,7 @@ mod tests {
                 "arguments": {}
             }),
         );
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -600,7 +601,7 @@ mod tests {
                 "arguments": {}
             }),
         );
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -624,7 +625,7 @@ mod tests {
                 "uri": "richter://global/status"
             }),
         );
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -642,7 +643,7 @@ mod tests {
         let (mut server, peer) = create_test_server();
 
         let request = make_request(7, "ping", serde_json::json!({}));
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();
@@ -658,7 +659,7 @@ mod tests {
         let (mut server, peer) = create_test_server();
 
         let request = make_request(8, "some/nonexistent", serde_json::json!({}));
-        peer.send(request).unwrap();
+        peer.send(request).await.unwrap();
 
         let msg = server.transport.recv().await.unwrap().unwrap();
         server.handle_message(msg).await.unwrap();

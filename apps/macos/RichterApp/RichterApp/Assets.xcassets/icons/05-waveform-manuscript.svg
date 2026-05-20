@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="cbg5" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#181825"/>
+    </linearGradient>
+    <linearGradient id="note5" x1="80" y1="170" x2="440" y2="330">
+      <stop offset="0%" stop-color="#89b4fa"/>
+      <stop offset="40%" stop-color="#cba6f7"/>
+      <stop offset="80%" stop-color="#f38ba8"/>
+      <stop offset="100%" stop-color="#fab387"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#cbg5)"/>
+  <g stroke="#6c7086" stroke-width="2" opacity="0.25">
+    <line x1="60" y1="170" x2="452" y2="170"/>
+    <line x1="60" y1="210" x2="452" y2="210"/>
+    <line x1="60" y1="250" x2="452" y2="250"/>
+    <line x1="60" y1="290" x2="452" y2="290"/>
+    <line x1="60" y1="330" x2="452" y2="330"/>
+  </g>
+  <g fill="url(#note5)">
+    <ellipse cx="120" cy="250" rx="10" ry="8" transform="rotate(-20 120 250)"/>
+    <line x1="130" y1="250" x2="130" y2="190" stroke="url(#note5)" stroke-width="2.5"/>
+    <ellipse cx="200" cy="230" rx="10" ry="8" transform="rotate(-20 200 230)"/>
+    <line x1="210" y1="230" x2="210" y2="180" stroke="url(#note5)" stroke-width="2.5"/>
+    <text x="270" y="248" font-family="monospace" font-size="36" fill="url(#note5)" font-weight="bold">&gt;</text>
+    <rect x="330" y="243" width="32" height="5" rx="2" fill="url(#note5)"/>
+    <text x="390" y="252" font-family="monospace" font-size="32" fill="url(#note5)" font-weight="bold">{}</text>
+  </g>
+  <path d="M 120 285 Q 160 265, 200 285 T 280 285 T 360 285 T 440 285"
+        fill="none" stroke="url(#note5)" stroke-width="2.5" opacity="0.5" stroke-linecap="round"/>
+</svg>

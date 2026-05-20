@@ -3,8 +3,8 @@
 //!
 //! Supports both stdio and local HTTP/streaming transports.
 
+pub mod daemon;
 pub mod resources;
 pub mod server;
 pub mod tools;
 pub mod transport;
-pub mod daemon;

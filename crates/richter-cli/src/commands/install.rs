@@ -158,8 +158,7 @@ async fn install_shims(args: InstallShimsArgs) -> anyhow::Result<()> {
 /// Builds (optional) and installs the richter binary to ~/.richter/bin/
 async fn install_binary(args: InstallBinaryArgs) -> anyhow::Result<()> {
     let target_dir = richter_dir().join("bin");
-    std::fs::create_dir_all(&target_dir)
-        .context("Failed to create ~/.richter/bin/")?;
+    std::fs::create_dir_all(&target_dir).context("Failed to create ~/.richter/bin/")?;
 
     if args.rebuild {
         println!("Building richter binary (release mode)...");
@@ -173,8 +172,7 @@ async fn install_binary(args: InstallBinaryArgs) -> anyhow::Result<()> {
     }
 
     // Find the binary
-    let src = std::env::current_exe()
-        .context("Failed to resolve current binary location")?;
+    let src = std::env::current_exe().context("Failed to resolve current binary location")?;
     let dst = target_dir.join("richter");
     std::fs::copy(&src, &dst)
         .with_context(|| format!("Failed to copy {} -> {}", src.display(), dst.display()))?;
@@ -346,13 +344,14 @@ fn shim_dir() -> PathBuf {
 
 /// Generates MCP config JSON for the given agent.
 fn mcp_config_for(_agent: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "$HOME".to_string());
     serde_json::json!({
         "mcpServers": {
             "richter": {
                 "command": "richter",
                 "args": ["mcp", "serve"],
                 "env": {
-                    "RICHTER_SOCKET": "/tmp/richter.sock"
+                    "RICHTER_SOCKET": format!("{home}/.richter/daemon.sock")
                 }
             }
         }

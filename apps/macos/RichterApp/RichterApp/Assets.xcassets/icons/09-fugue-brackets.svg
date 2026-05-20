@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="cbg9" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#181825"/>
+    </linearGradient>
+    <linearGradient id="bracket9" x1="140" y1="140" x2="372" y2="360">
+      <stop offset="0%" stop-color="#89b4fa"/>
+      <stop offset="40%" stop-color="#cba6f7"/>
+      <stop offset="70%" stop-color="#f38ba8"/>
+      <stop offset="100%" stop-color="#fab387"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#cbg9)"/>
+  <g fill="none" stroke="url(#bracket9)" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 160 140 L 140 140 L 140 240 L 160 240" stroke-width="6" opacity="0.2"/>
+    <path d="M 160 260 L 140 260 L 140 360 L 160 360" stroke-width="6" opacity="0.2"/>
+    <path d="M 200 160 L 180 160 L 180 240 L 200 240" stroke-width="6" opacity="0.35"/>
+    <path d="M 200 260 L 180 260 L 180 340 L 200 340" stroke-width="6" opacity="0.35"/>
+    <path d="M 240 180 L 220 180 L 220 240 L 240 240" stroke-width="6" opacity="0.5"/>
+    <path d="M 240 260 L 220 260 L 220 320 L 240 320" stroke-width="6" opacity="0.5"/>
+    <path d="M 280 200 L 260 200 L 260 240 L 280 240" stroke-width="6" opacity="0.75"/>
+    <path d="M 280 260 L 260 260 L 260 300 L 280 300" stroke-width="6" opacity="0.75"/>
+    <path d="M 352 140 L 372 140 L 372 240 L 352 240" stroke-width="6" opacity="0.2"/>
+    <path d="M 352 260 L 372 260 L 372 360 L 352 360" stroke-width="6" opacity="0.2"/>
+    <path d="M 312 160 L 332 160 L 332 240 L 312 240" stroke-width="6" opacity="0.35"/>
+    <path d="M 312 260 L 332 260 L 332 340 L 312 340" stroke-width="6" opacity="0.35"/>
+    <path d="M 272 180 L 292 180 L 292 240 L 272 240" stroke-width="6" opacity="0.5"/>
+    <path d="M 272 260 L 292 260 L 292 320 L 272 320" stroke-width="6" opacity="0.5"/>
+    <path d="M 232 200 L 252 200 L 252 240 L 232 240" stroke-width="6" opacity="0.75"/>
+    <path d="M 232 260 L 252 260 L 252 300 L 232 300" stroke-width="6" opacity="0.75"/>
+  </g>
+</svg>

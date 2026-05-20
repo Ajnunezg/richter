@@ -206,8 +206,10 @@ impl ToolHandler for RunOrJoinTool {
 
         let spec = crate::supervisor::RunSpec {
             command,
-            repo,
-            classification,
+            repo: std::path::PathBuf::from(repo),
+            classification: classification
+                .parse()
+                .unwrap_or(richter_core::models::CommandClass::Unknown),
             ..Default::default()
         };
 

@@ -235,9 +235,7 @@ impl EventBus {
                 debug!("Emitted event [{variant}] to {n} subscribers");
                 true
             }
-            Err(_e) => {
-                false
-            }
+            Err(_e) => false,
         }
     }
 

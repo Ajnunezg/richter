@@ -7,8 +7,8 @@
 
 use anyhow::Context;
 
-mod client;
-mod commands;
+use richter_cli::client;
+use richter_cli::commands;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -29,12 +29,7 @@ struct Cli {
     verbose: u8,
 
     /// Path to the Richter daemon socket
-    #[arg(
-        long,
-        env = "RICHTER_SOCKET",
-        default_value = "/tmp/richter.sock",
-        global = true
-    )]
+    #[arg(long, env = "RICHTER_SOCKET", default_value = "", global = true)]
     socket: String,
 
     /// Subcommand to execute
@@ -114,9 +109,49 @@ fn setup_tracing(verbose: u8) {
         .init();
 }
 
+/// Default set of known build/test/lint tools that can be shimmed.
+const DEFAULT_SHIM_TOOLS: &[&str] = &[
+    "cargo", "go", "npm", "npx", "yarn", "pnpm", "pip", "pip3", "python", "python3", "make",
+    "cmake", "bazel", "rustc", "gcc", "g++", "clang", "clang++", "javac", "dotnet", "git",
+];
+
+/// Load the list of shim-able tool names.
+/// Merges the built-in defaults with any additional tools specified in
+/// `~/.richter/shims.toml` under the `[tools]` key with `additional = [...]`.
+fn load_shim_tools() -> Vec<&'static str> {
+    let mut tools: Vec<&'static str> = DEFAULT_SHIM_TOOLS.to_vec();
+    if let Ok(home) = std::env::var("HOME") {
+        let shims_path = std::path::Path::new(&home).join(".richter/shims.toml");
+        if shims_path.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&shims_path) {
+                if let Ok(value) = contents.parse::<toml::Value>() {
+                    if let Some(additional) = value
+                        .get("tools")
+                        .and_then(|t| t.get("additional"))
+                        .and_then(|a| a.as_array())
+                    {
+                        for item in additional {
+                            if let Some(name) = item.as_str() {
+                                if !tools.contains(&name) {
+                                    // Leak the string to get a &'static str.
+                                    // This is acceptable because the list is loaded once at startup.
+                                    let leaked: &'static str =
+                                        Box::leak(name.to_string().into_boxed_str());
+                                    tools.push(leaked);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    tools
+}
 
 /// Detect if the binary was invoked as a shim (symlink with a different name).
-/// Uses argv[0] to determine the tool name.
+/// Uses argv[0] to determine the tool name. Checks against the configurable
+/// list of known tools (defaults + `~/.richter/shims.toml` additional tools).
 fn detect_shim() -> Option<String> {
     let argv0 = std::env::args().next()?;
     let invoked_as = std::path::Path::new(&argv0)
@@ -124,13 +159,8 @@ fn detect_shim() -> Option<String> {
         .and_then(|s| s.to_str())
         .map(|s| s.to_lowercase())?;
 
-    let known_tools = [
-        "cargo", "go", "npm", "npx", "yarn", "pnpm", "pip", "pip3",
-        "python", "python3", "make", "cmake", "bazel", "rustc", "gcc",
-        "g++", "clang", "clang++", "javac", "dotnet", "git",
-    ];
-
-    if known_tools.contains(&invoked_as.as_str()) {
+    let tools = load_shim_tools();
+    if tools.contains(&invoked_as.as_str()) {
         Some(invoked_as)
     } else {
         None
@@ -147,15 +177,14 @@ fn run_as_shim(shim_name: &str) -> anyhow::Result<()> {
         args.join(" ")
     };
 
-    let socket = std::env::var("RICHTER_SOCKET")
-        .unwrap_or_else(|_| "/tmp/richter.sock".to_string());
+    let socket = std::env::var("RICHTER_SOCKET").unwrap_or_else(|_| default_socket_path());
 
     let cwd = std::env::current_dir()
         .ok()
         .and_then(|p| p.to_str().map(String::from))
         .unwrap_or_else(|| ".".to_string());
 
-    let client = crate::client::LocalClient::new(&socket);
+    let client = client::LocalClient::new(&socket);
 
     let req = serde_json::json!({
         "method": "run",
@@ -208,6 +237,19 @@ fn run_as_shim(shim_name: &str) -> anyhow::Result<()> {
 
     Ok(())
 }
+fn default_socket_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    format!("{home}/.richter/daemon.sock")
+}
+
+fn resolve_socket(cli_socket: &str) -> String {
+    if cli_socket.is_empty() {
+        default_socket_path()
+    } else {
+        cli_socket.to_string()
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Shim detection: if invoked via a symlink (e.g., `cargo` → richter),
     // forward the command through the daemon automatically.
@@ -216,28 +258,29 @@ fn main() -> anyhow::Result<()> {
     }
 
     let cli = Cli::parse();
+    let socket = resolve_socket(&cli.socket);
     setup_tracing(cli.verbose);
 
     let rt = tokio::runtime::Runtime::new().context("Failed to create Tokio runtime")?;
 
     rt.block_on(async move {
         match cli.command {
-            Commands::Doctor(args) => commands::doctor::run(args, &cli.socket).await,
-            Commands::Status(args) => commands::status::run(args, &cli.socket).await,
-            Commands::Repos(args) => commands::repos::run(args, &cli.socket).await,
-            Commands::Agents(args) => commands::agents::run(args, &cli.socket).await,
-            Commands::Runs(args) => commands::runs::run(args, &cli.socket).await,
-            Commands::Events(args) => commands::events::run(args, &cli.socket).await,
-            Commands::Run(args) => commands::run::run(args, &cli.socket).await,
-            Commands::Install(cmd) => commands::install::run(cmd, &cli.socket).await,
-            Commands::Simulate(args) => commands::simulate::run(args, &cli.socket).await,
-            Commands::Claim(args) => commands::claim::run(args, &cli.socket).await,
-            Commands::Worktree(cmd) => commands::worktree::run(cmd, &cli.socket).await,
-            Commands::Explain(args) => commands::explain::run(args, &cli.socket).await,
-            Commands::Audit(args) => commands::audit::run(args, &cli.socket).await,
-            Commands::Setup(args) => commands::setup::run(args, &cli.socket).await,
-            Commands::Config(cmd) => commands::config::run(cmd, &cli.socket).await,
-            Commands::Mobile(cmd) => commands::mobile::run(cmd, &cli.socket).await,
+            Commands::Doctor(args) => commands::doctor::run(args, &socket).await,
+            Commands::Status(args) => commands::status::run(args, &socket).await,
+            Commands::Repos(args) => commands::repos::run(args, &socket).await,
+            Commands::Agents(args) => commands::agents::run(args, &socket).await,
+            Commands::Runs(args) => commands::runs::run(args, &socket).await,
+            Commands::Events(args) => commands::events::run(args, &socket).await,
+            Commands::Run(args) => commands::run::run(args, &socket).await,
+            Commands::Install(cmd) => commands::install::run(cmd, &socket).await,
+            Commands::Simulate(args) => commands::simulate::run(args, &socket).await,
+            Commands::Claim(args) => commands::claim::run(args, &socket).await,
+            Commands::Worktree(cmd) => commands::worktree::run(cmd, &socket).await,
+            Commands::Explain(args) => commands::explain::run(args, &socket).await,
+            Commands::Audit(args) => commands::audit::run(args, &socket).await,
+            Commands::Setup(args) => commands::setup::run(args, &socket).await,
+            Commands::Config(cmd) => commands::config::run(cmd, &socket).await,
+            Commands::Mobile(cmd) => commands::mobile::run(cmd, &socket).await,
         }
     })?;
 

@@ -34,7 +34,7 @@ struct ExplainResponse {
 
 pub async fn run(args: ExplainArgs, socket: &str) -> anyhow::Result<()> {
     let client = LocalClient::new(socket);
-    
+
     let req = serde_json::json!({
         "method": "explain",
         "params": { "run_id": args.run_id }

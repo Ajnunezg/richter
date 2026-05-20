@@ -64,6 +64,22 @@ pub struct RichterConfig {
     /// General settings.
     #[serde(default)]
     pub general: GeneralConfig,
+
+    /// Environment variable denylist for spawned processes.
+    /// Defaults to dangerous keys like PATH, LD_PRELOAD, etc.
+    #[serde(default = "default_env_denylist")]
+    pub env_denylist: Vec<String>,
+}
+
+/// Default denied environment variable keys.
+fn default_env_denylist() -> Vec<String> {
+    vec![
+        "PATH".into(),
+        "LD_PRELOAD".into(),
+        "LD_LIBRARY_PATH".into(),
+        "DYLD_INSERT_LIBRARIES".into(),
+        "DYLD_LIBRARY_PATH".into(),
+    ]
 }
 
 impl Default for RichterConfig {
@@ -82,6 +98,7 @@ impl Default for RichterConfig {
             retention: RetentionConfig::default(),
             parsers: Vec::new(),
             general: GeneralConfig::default(),
+            env_denylist: default_env_denylist(),
         }
     }
 }
@@ -343,7 +360,9 @@ pub struct TemplateStep {
     #[serde(default = "default_template_class")]
     pub class: String,
 }
-fn default_template_class() -> String { "unknown".into() }
+fn default_template_class() -> String {
+    "unknown".into()
+}
 
 /// Plugin manifest configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +395,9 @@ pub struct ParserConfig {
     #[serde(default = "default_importance")]
     pub importance: u8,
 }
-fn default_importance() -> u8 { 75 }
+fn default_importance() -> u8 {
+    75
+}
 
 /// Data retention configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -477,14 +498,15 @@ pub fn load_repo_config(repo_root: &Path) -> Result<RichterConfig> {
         merge_config(&mut config, &repo_config);
     }
 
-    // Also check for policy yaml
-    let policy_path = repo_root.join(".richter").join("policy.yaml");
+    // Also check for policy overrides (TOML, with JSON fallback)
+    let policy_path = repo_root.join(".richter").join("policy.toml");
     if policy_path.exists() {
         let policy_raw =
-            std::fs::read_to_string(&policy_path).context("read .richter/policy.yaml")?;
-        if let Ok(policies) = serde_json::from_str::<Vec<CommandPolicy>>(&policy_raw) {
-            config.commands.extend(policies);
-        }
+            std::fs::read_to_string(&policy_path).context("read .richter/policy.toml")?;
+        let policies: Vec<CommandPolicy> = toml::from_str(&policy_raw)
+            .or_else(|_| serde_json::from_str(&policy_raw))
+            .with_context(|| format!("parse policy file {}", policy_path.display()))?;
+        config.commands.extend(policies);
     }
 
     Ok(config)

@@ -138,8 +138,8 @@ mod tests {
 
     #[test]
     fn test_local_client_new() {
-        let client = LocalClient::new("/tmp/richter.sock");
-        assert_eq!(client.socket_path, "/tmp/richter.sock");
+        let client = LocalClient::new("/nonexistent/richter.sock");
+        assert_eq!(client.socket_path, "/nonexistent/richter.sock");
     }
 
     #[test]

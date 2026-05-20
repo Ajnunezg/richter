@@ -24,7 +24,7 @@ pub fn format_duration_ms(ms: u64) -> String {
 #[allow(dead_code)]
 pub fn status_line(label: &str, value: &str, color_code: &str) {
     if use_color() {
-        println!("  {} {}{}{}", label, color_code, value, "\x1B[0m");
+        println!("  {} {}{}\x1B[0m", label, color_code, value);
     } else {
         println!("  {} {}", label, value);
     }

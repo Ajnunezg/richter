@@ -371,6 +371,17 @@ Richter Mobile can notify you of important events:
 
 For the full notification design, see **[Notifications](NOTIFICATIONS.md)**.
 
+## Transport Security Status
+
+> **⚠️ Not yet implemented.** TLS for the mobile gateway is planned but not
+> currently active. The `tls_enabled` config flag exists and defaults to `true`,
+> but the TLS termination code is a stub — the gateway always listens on plain
+> HTTP regardless of the flag. For production use, run a reverse proxy
+> (nginx, Caddy) in front of the gateway to handle TLS termination until
+> native TLS support lands. The pairing token and Ed25519 per-request signing
+> provide authentication and integrity even without TLS, but traffic is not
+> encrypted on the wire.
+
 ## Security and Privacy
 
 Richter Mobile inherits Richter's local-first, cloud-optional security

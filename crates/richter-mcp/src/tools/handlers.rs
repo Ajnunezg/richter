@@ -81,7 +81,14 @@ pub async fn richter_status(ctx: &ToolContext, _input: StatusInput) -> Result<Js
 /// Query the daemon for per-repo status.
 pub async fn richter_repo_status(ctx: &ToolContext, input: RepoStatusInput) -> Result<JsonValue> {
     debug!(repo_id = %input.repo_id, "richter_repo_status called");
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { if let Ok(r) = client.get("/repos") { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            if let Ok(r) = client.get("/repos") {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(daemon_offline_response("richter_repo_status"));
     }
@@ -184,7 +191,14 @@ pub async fn richter_recent_important_events(
         limit = input.limit,
         "richter_recent_important_events called"
     );
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { if let Ok(r) = client.get("/events/rest") { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            if let Ok(r) = client.get("/events/rest") {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(daemon_offline_with_empty("events"));
     }
@@ -203,7 +217,16 @@ pub async fn richter_claim_paths(ctx: &ToolContext, input: ClaimPathsInput) -> R
         "richter_claim_paths called"
     );
 
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { let body = serde_json::json!({"paths":input.paths,"agent_id":input.agent_id,"ttl":input.ttl}); if let Ok(r) = client.post("/leases", body) { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            let body =
+                serde_json::json!({"paths":input.paths,"agent_id":input.agent_id,"ttl":input.ttl});
+            if let Ok(r) = client.post("/leases", body) {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(serde_json::json!({
             "error": "daemon_not_running",
@@ -229,7 +252,15 @@ pub async fn richter_release_paths(
 ) -> Result<JsonValue> {
     info!(paths = ?input.paths, agent_id = %input.agent_id, "richter_release_paths called");
 
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { let body = serde_json::json!({"paths":input.paths,"agent_id":input.agent_id}); if let Ok(r) = client.post("/leases/release", body) { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            let body = serde_json::json!({"paths":input.paths,"agent_id":input.agent_id});
+            if let Ok(r) = client.post("/leases/release", body) {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(daemon_offline_with_empty("released"));
     }
@@ -248,7 +279,14 @@ pub async fn richter_explain_decision(
 ) -> Result<JsonValue> {
     debug!(decision_id = %input.decision_id, "richter_explain_decision called");
 
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { if let Ok(r) = client.get(&format!("/explain/{}", input.decision_id)) { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            if let Ok(r) = client.get(&format!("/explain/{}", input.decision_id)) {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(serde_json::json!({
             "error": "daemon_not_running",
@@ -278,7 +316,14 @@ pub async fn richter_get_run_summary(
 ) -> Result<JsonValue> {
     debug!(run_id = %input.run_id, "richter_get_run_summary called");
 
-    #[cfg(unix)] { if let Some(client) = &ctx.daemon_client { if let Ok(r) = client.get(&format!("/runs/{}", input.run_id)) { return Ok(r); } } }
+    #[cfg(unix)]
+    {
+        if let Some(client) = &ctx.daemon_client {
+            if let Ok(r) = client.get(&format!("/runs/{}", input.run_id)) {
+                return Ok(r);
+            }
+        }
+    }
     if !ctx.daemon_available {
         return Ok(serde_json::json!({
             "error": "daemon_not_running",

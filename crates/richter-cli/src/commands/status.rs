@@ -136,7 +136,7 @@ fn pressure_bar(pressure: f64) -> String {
     format!("{color}[{bar}]\x1B[0m")
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn human_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;

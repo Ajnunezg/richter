@@ -1,0 +1,151 @@
+{
+  "score": 5,
+  "summary": "Richter has solid security foundations (constant-time token comparison, 0600 permissions, comprehensive secret redaction, strong token generation, safe SQL via parameterized queries, env injection blocks) but has several critical gaps that would block a production launch: TLS is completely unimplemented despite docs claiming it exists, there is zero authorization model (bearer token == god mode), the plugin runtime executes unsigned binaries, and webhook delivery is a stub. The codebase is ~80% done on paper but missing key security implementations.",
+  "strengths": [
+    "Strong auth token generation: 32 random bytes + SHA-256 hashing, hex-encoded (crates/richter-daemon/src/api.rs:142-160)",
+    "Constant-time token comparison using subtle::ConstantTimeEq — immune to timing attacks (crates/richter-daemon/src/api.rs:130-140)",
+    "Token file stored with 0600 permissions, with verify_restrictive_permissions() auto-correcting loose perms (crates/richter-daemon/src/api.rs:165-185)",
+    "Data directory permissions hardened to 0700 at daemon startup (crates/richter-daemon/src/main.rs:48-58)",
+    "Comprehensive secrets redaction engine covering 20+ secret patterns: OpenAI/Anthropic/GitHub/AWS/GCP/Azure keys, JWTs, private keys, DB URLs, Stripe, Slack tokens (crates/richter-core/src/redact.rs:full file)",
+    "All SQL queries use parameterized bindings (?1, ?2) — no SQL injection surface (crates/richter-core/src/db.rs:all queries)",
+    "Dangerous env key blocking: prevents injection of LD_PRELOAD, DYLD_INSERT_LIBRARIES, PATH, DYLD_LIBRARY_PATH (crates/richter-daemon/src/supervisor.rs:102-110)",
+    "Input validation on /run_or_join: max command length 4096, max repo length 4096, max 100 env entries, max env key 256 bytes, max env value 4096 bytes, forbidden char filtering (\\0, \\n, \\r) (crates/richter-daemon/src/api.rs:211-260)",
+    "Mobile gateway has Ed25519 request signing with timestamp replay protection (60s window) and nonce bloom filter (crates/richter-daemon/src/mobile_gateway.rs:55-85, 417-455)",
+    "Mobile gateway has per-device rate limiting via token bucket (60 req/min) with Retry-After header (crates/richter-daemon/src/mobile_gateway.rs:87-132)",
+    "Mobile gateway scope enforcement: device capabilities checked per-endpoint (crates/richter-daemon/src/mobile_gateway.rs:470-490)",
+    "Mobile device revocation model: immediate, audited, with device.decision tracking (crates/richter-daemon/src/mobile_gateway.rs:346-360)",
+    "Mobile pairing ceremony with 256-bit entropy, 120-second expiry, single-use tokens (crates/richter-daemon/src/mobile_gateway.rs:304-344)",
+    "No telemetry, no analytics, no phone-home — privacy-by-default design (docs/PRIVACY.md, SECURITY.md)",
+    "Database integrity check (PRAGMA integrity_check) on open (crates/richter-core/src/db.rs:48-53)",
+    "WAL mode + foreign keys enabled on SQLite (crates/richter-core/src/db.rs:37-47)",
+    "Graceful shutdown: drain active runs, orphan reconciliation, WAL checkpoint (crates/richter-daemon/src/main.rs:255-290)",
+    "Pidfile-based double-start prevention with stale detection (crates/richter-daemon/src/main.rs:62-80)",
+    "Model call budget/circuit breaker prevents runaway LLM spend (crates/richter-daemon/src/api.rs:22-75)",
+    ".gitignore excludes *.token, *.key, *.pem, .env, secrets/, credentials/ (root .gitignore)",
+    "deny.toml configured to deny vulnerability advisories, deny copyleft licenses, deny wildcard deps (root deny.toml)"
+  ],
+  "weaknesses": [
+    "No authorization model — single bearer token grants full access to all endpoints; no read/write/admin role separation (crates/richter-daemon/src/api.rs:123-145)",
+    "No rate limiting on the main Unix socket API — only the mobile gateway has rate limiting (crates/richter-daemon/src/api.rs: full file — no rate limiter anywhere in the router)",
+    "CORS allows plain HTTP origins (http://localhost:3000, http://localhost:5173) — any local web server on those ports can access the API if the browser can reach the socket (crates/richter-daemon/src/api.rs:480-488)",
+    "No CSRF protection on state-changing endpoints (POST /run_or_join, PUT /settings, POST /preview) — mitigated by bearer token requirement but no SameSite/Origin validation",
+    "No audit logging on the main API — no record of who called what endpoint, when, with what parameters (audit handler only reads event bus, doesn't log API access) (crates/richter-daemon/src/api.rs:370-410)",
+    "Run ID paths from URL are not validated beyond type (String) — could allow path traversal in `/runs/{run_id}/output` and `/stream_run/{run_id}` if combined with filesystem operations (crates/richter-daemon/src/api.rs:339-355)",
+    "Settings endpoint (PUT /settings) has no validation on keys or values — arbitrary JSON can be stored and later read (crates/richter-daemon/src/api.rs:281-288)",
+    "No request body size limit on POST endpoints — a client could send arbitrarily large JSON payloads (crates/richter-daemon/src/api.rs:no body limit configured in axum Router)",
+    "The `explain_handler` does no input validation on run_id (crates/richter-daemon/src/api.rs:293-313)",
+    "SSE event stream has no authentication re-validation — once connected, stream continues indefinitely without re-checking auth (crates/richter-daemon/src/api.rs:355-395)",
+    "Database file backed up on startup but backup is not integrity-checked before copy (crates/richter-daemon/src/main.rs:135-139)",
+    "Plugin runtime executes unsigned binaries from ~/.richter/plugins/ with no signature verification or sandboxing (crates/richter-daemon/src/plugin_runtime.rs:32-50)",
+    "Mobile gateway `serve_mobile` logs 'http://{bind_addr}' even when tls_enabled is true — misleading (crates/richter-daemon/src/mobile_gateway.rs:514)",
+    "Mobile pairing: QR code encodes the raw pairing secret in a URL — could be logged in browser history or router logs if accidentally opened in browser (crates/richter-cli/src/commands/mobile.rs:108)",
+    "No input sanitization on webhook URL — arbitrary URLs accepted without validation that they are https:// (crates/richter-daemon/src/webhooks.rs:57-62)",
+    "No HMAC signature verification on incoming webhooks (not applicable — Richter only sends, but docs are ambiguous)",
+    "`unsafe` block in main.rs for libc::kill (pidfile check) and in supervisor.rs for pre_exec setpgid — low risk but worth auditing (crates/richter-daemon/src/main.rs:66, crates/richter-daemon/src/supervisor.rs:191-196)",
+    "Mobile gateway new() generates signing key from OsRng but same constructor is used for tests — test keys use OsRng which is fine but slower than seeded RNG (crates/richter-daemon/src/mobile_gateway.rs:246-251)",
+    "Pairing session storage is in-memory only (RwLock<Vec<PairingSession>>) despite having SQLite tables for it — daemon restart loses active pairing sessions (crates/richter-daemon/src/mobile_gateway.rs:238, crates/richter-core/src/db.rs:migration v2 has mobile_pairing_sessions table)"
+  ],
+  "critical_findings": [
+    "TLS COMPLETELY UNIMPLEMENTED: The mobile gateway's `serve_mobile()` function accepts `_use_tls: bool` (note the underscore prefix indicating intentionally unused). The code hardcodes `http://` in log output. There are ZERO TLS dependencies in Cargo.lock (no rustls, no openssl, no native-tls). Despite docs/MOBILE_SECURITY.md claiming TLS 1.3, self-signed certs, certificate pinning, and 'No CA trust' architecture, NONE of this exists in code. All mobile traffic would travel as plaintext HTTP. This directly contradicts the documented security model and is a launch blocker. (crates/richter-daemon/src/mobile_gateway.rs:505-520)",
+    "NO AUTHORIZATION MODEL: The main API uses a single bearer token that grants full access to ALL endpoints. There is no concept of roles, scopes, or read-only vs read-write permission. Any process running as the same user that can read the token file (~/.richter/auth_token, mode 0600) has complete control: can execute arbitrary shell commands, modify settings, access all run output, and stream events. The mobile gateway has scope enforcement, but the primary API surface has zero authorization granularity. (crates/richter-daemon/src/api.rs:123-145)",
+    "WEBHOOK DELIVERY UNIMPLEMENTED: The webhook module (crates/richter-daemon/src/webhooks.rs) supports CRUD for webhook configurations (create, list, delete) but has ZERO delivery code. There is no HTTP client, no signature generation for outgoing webhooks, no retry logic, no circuit breaker. The `WebhookConfig.secret` field is stored but never used. The webhook system is a stub — it stores configurations that are never acted upon. (crates/richter-daemon/src/webhooks.rs: entire file)",
+    "PLUGIN RUNTIME EXECUTES UNSIGNED BINARIES: The plugin discovery mechanism in `PluginRuntime::discover()` executes arbitrary binaries from `~/.richter/plugins/` using `Command::new(&path).arg(\"--richter-manifest\").output()`. There is no code signature verification, no sandboxing, no capability restriction, and no integrity check. Any binary placed in the plugins directory (by any process running as the user, or by an agent with filesystem access) will be executed with full user privileges. This is an arbitrary code execution vector. (crates/richter-daemon/src/plugin_runtime.rs:32-50)",
+    "LLM MODEL CALLS ARE STUBS: The importance pipeline's `cheap_model_boost()` and `frontier_model_boost()` methods are heuristic stubs that don't actually call any model. Despite the docs claiming optional model provider integration (OpenAI, Anthropic, DeepSeek), the `hyper` dependency, and configuration flags (`use_cheap_model`, `use_frontier_model`), there is zero HTTP client code that sends data to model providers. This means the claimed redaction-at-model-call-time security guarantee is untested and the data-exposure surface to model providers is currently zero (good for privacy, but misleading docs). (crates/richter-daemon/src/importance/pipeline.rs:118-130)"
+  ],
+  "diligence_blockers": [
+    "TLS not implemented — mobile security docs claim TLS 1.3 with certificate pinning; code has no TLS at all. This is a material misrepresentation in a security diligence review.",
+    "No authorization model on main API — bearer token == full access. This would fail any reasonable access control audit.",
+    "Plugin runtime binary execution without signature verification — arbitrary code execution vector.",
+    "Webhook delivery unimplemented — webhook system is a configuration-only stub with no delivery mechanism.",
+    "No API audit logging — no record of who accessed what. This would fail SOC 2 / compliance review.",
+    "Model provider integration stubs — docs claim redaction-before-model-call guarantee but the model call code doesn't exist, so the guarantee can't be verified.",
+    "No rate limiting on main API — DoS vector for local processes."
+  ],
+  "vulnerability_details": [
+    {
+      "title": "TLS Unimplemented — Mobile Traffic in Plaintext",
+      "severity": "critical",
+      "file": "crates/richter-daemon/src/mobile_gateway.rs",
+      "line": 505,
+      "description": "The `serve_mobile()` function signature is `async fn serve_mobile(state, bind_addr, shutdown, _use_tls: bool, _data_dir: &Path)`. The `_` prefix on `_use_tls` and `_data_dir` means Rust treats them as intentionally unused. The function hardcodes `info!(\"Mobile Gateway listening on http://{bind_addr}\")` at line 514. There is no TLS setup code — no certificate loading, no TLS acceptor, no axum-tls or rustls integration. The Cargo.lock contains zero TLS library dependencies (no rustls, openssl, native-tls). This directly contradicts docs/MOBILE_SECURITY.md which claims TLS 1.3, self-signed cert generation, certificate pinning, and 'No CA trust' architecture."
+    },
+    {
+      "title": "Single Bearer Token = Full System Access",
+      "severity": "high",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 123,
+      "description": "The auth middleware only checks `Authorization: Bearer <token>` against the stored token. Once authenticated, the request has full access to ALL endpoints: run arbitrary commands (POST /run_or_join), modify settings (PUT /settings), read all run output, stream events, etc. There is no scope, role, or permission differentiation. The mobile gateway has a scope model, but the primary API has none."
+    },
+    {
+      "title": "Plugin Binary Execution Without Verification",
+      "severity": "high",
+      "file": "crates/richter-daemon/src/plugin_runtime.rs",
+      "line": 32,
+      "description": "`PluginRuntime::discover()` iterates files in `~/.richter/plugins/` and executes each one via `Command::new(&path).arg(\"--richter-manifest\").output()`. There is no code signature check, no hash verification, no sandboxing, and no capability restriction. Any binary placed in this directory runs with the user's full privileges."
+    },
+    {
+      "title": "Webhook Delivery Not Implemented",
+      "severity": "high",
+      "file": "crates/richter-daemon/src/webhooks.rs",
+      "line": 1,
+      "description": "The webhook module (76 lines) only implements CRUD for webhook configurations. There is no HTTP client code to deliver webhook payloads, no retry logic, no signature generation using the stored secret, and no circuit breaker. The `hyper` dependency exists in Cargo.toml but is not used for webhook delivery anywhere in the daemon."
+    },
+    {
+      "title": "No Rate Limiting on Main API",
+      "severity": "medium",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 467,
+      "description": "The router built by `build_router()` has no rate limiting middleware. The mobile gateway has per-device rate limiting (60 req/min), but the primary Unix socket API has none. A local process with the auth token can flood the daemon with requests, potentially causing resource exhaustion."
+    },
+    {
+      "title": "No API Audit Logging",
+      "severity": "medium",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 370,
+      "description": "The `/audit` endpoint reads from the event bus to show system events (run started, run completed, cache hits, conflicts). However, there is no audit logging of API access itself — no record of which client called which endpoint, at what time, with what parameters, from which source. This means unauthorized access could go undetected."
+    },
+    {
+      "title": "No Request Body Size Limits",
+      "severity": "medium",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 467,
+      "description": "The axum Router has no `DefaultBodyLimit` layer. A client can send arbitrarily large JSON payloads to POST endpoints, potentially causing memory exhaustion."
+    },
+    {
+      "title": "Run ID Path Traversal Risk in Output Handlers",
+      "severity": "low",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 339,
+      "description": "The `/runs/{run_id}/output` and `/stream_run/{run_id}` handlers pass the `run_id` string directly to the supervisor's `get_output()` and `stream_output()` methods. If these methods ever use the run_id in filesystem operations (currently they don't — they use in-memory maps), a path traversal could occur. The current implementation is safe, but the design has no defense-in-depth against future changes."
+    },
+    {
+      "title": "SSE Stream Authentication Not Re-validated",
+      "severity": "low",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 355,
+      "description": "SSE event streams (`/events`, `/stream_run/{run_id}`) are authenticated once at connection time via the auth middleware. Once connected, the stream continues indefinitely without re-validating the auth token. If the token were rotated (on daemon restart), existing SSE connections would remain valid until the daemon process exits."
+    },
+    {
+      "title": "Pairing Secret Exposed in URL",
+      "severity": "low",
+      "file": "crates/richter-cli/src/commands/mobile.rs",
+      "line": 108,
+      "description": "The mobile pair command constructs a `richter://pair?...&pairing_secret=...` URL and displays it as text alongside the QR code. If a user accidentally opens this URL in a browser, the pairing secret could be logged in browser history or intercepted by a malicious browser extension."
+    },
+    {
+      "title": "CORS Configuration Permissive for Localhost",
+      "severity": "info",
+      "file": "crates/richter-daemon/src/api.rs",
+      "line": 480,
+      "description": "CORS allows `http://localhost:3000`, `http://localhost:5173`, and the 127.0.0.1 equivalents. While appropriate for a dev tool, any webpage served from localhost on those ports could potentially make cross-origin requests to the Richter API if it were exposed on a TCP port. Currently the Unix socket mitigates this, but if the API were ever exposed on TCP without additional hardening, this would be exploitable."
+    },
+    {
+      "title": "No TLS Library in Dependencies",
+      "severity": "high",
+      "file": "Cargo.lock",
+      "line": 1,
+      "description": "The entire Cargo.lock contains zero TLS-related crates (no rustls, openssl, native-tls, webpki, ring for TLS). This independently confirms that TLS is not implemented anywhere in the codebase."
+    }
+  ],
+  "detailed_findings": "## Authentication\n\n### Main API (Unix Socket)\nThe daemon API uses a single bearer token for authentication. Token generation is strong: 32 random bytes from `rand::thread_rng()`, hashed with SHA-256, hex-encoded, written to `~/.richter/auth_token` with 0600 permissions. Token comparison uses `subtle::ConstantTimeEq` which prevents timing attacks. Token is rotated on daemon restart (new token generated if not found).\n\nCritical gap: There is NO authorization model. The bearer token is checked once (present/valid → full access, absent/invalid → 401). Every authenticated client has identical, unrestricted access to all endpoints including command execution, settings modification, and event streaming.\n\n### Mobile Gateway\nMobile auth is well-designed ON PAPER: Ed25519 request signing per-device, timestamp replay protection (60s window), nonce bloom filter, per-device rate limiting (60 req/min token bucket), scope enforcement per endpoint, device revocation. Legacy bearer token support also exists using the daemon's pairing token.\n\nCritical gap: The mobile gateway serves plain HTTP. The `serve_mobile()` function's `_use_tls` parameter is intentionally unused. Despite docs claiming TLS 1.3, self-signed certificates, and certificate pinning, none of this is implemented.\n\n## Authorization\n\nNo role-based access control exists on the main API. The mobile gateway has a scope system (readonly, run_commands, approve_actions) enforced per-endpoint via `required_scope_for_path()`, but the main API has nothing equivalent.\n\n## Secrets Management\n\nStrengths:\n- Provider API keys stored in macOS Keychain (docs claim, not independently verified in code)\n- Auth token file permissions 0600 with auto-correction\n- Data directory permissions hardened to 0700\n- `.gitignore` excludes `*.token`, `*.key`, `*.pem`, `.env`, `secrets/`, `credentials/`\n\nWeaknesses:\n- Token file is readable by any process running as same user (Unix permission model limitation)\n- No support for hardware security modules or secure enclave for the daemon's signing key\n\n## Input Validation\n\nStrong: `/run_or_join` validates command length (max 4096 bytes), repo path length (max 4096 bytes), env entries (max 100), env key/value lengths (256/4096 bytes), forbidden characters (null, newline, carriage return).\n\nWeak: Settings PUT endpoint has no validation on keys or values. Run ID path parameters are accepted as raw strings without sanitization. No body size limit on POST endpoints.\n\nCommand injection: The supervisor executes `$SHELL -c <command>` with the raw command string. While null bytes and newlines are filtered, this is fundamentally a command execution service — any authenticated client can run arbitrary shell commands by design.\n\n## SQL Injection\n\nSAFE: All database queries use parameterized bindings (`?1`, `?2`, etc.). No raw SQL string concatenation was found. The `list_events` function dynamically builds WHERE clauses but only uses parameterized bindings for the values, never for column names or SQL keywords.\n\n## Path Traversal\n\nLOW RISK: The `run_id` parameter in URL paths is passed to in-memory DashMap lookups, not filesystem operations. However, there's no validation that run_id doesn't contain `../` or other traversal sequences. If future code uses run_id in filesystem operations, this could become exploitable.\n\n## TLS / Encryption in Transit\n\nCRITICAL GAP: Mobile gateway TLS is completely unimplemented. The main API uses a Unix domain socket (not network-exposed), so TLS is not applicable there. But the mobile gateway is designed to be LAN-accessible and serves plain HTTP only.\n\nNo TLS dependencies exist in Cargo.lock (no rustls, openssl, native-tls, webpki).\n\n## Rate Limiting\n\nMobile gateway: Per-device token bucket, 60 req/min. Includes Retry-After header.\nMain API: No rate limiting whatsoever.\nEvent bus: Has coalescence for duplicate events, notification rate limiting (default 3/min).\nModel calls: Circuit breaker (ModelCallBudget) with 30 calls/min default.\n\n## CORS Configuration\n\nAllows localhost:3000, localhost:5173, 127.0.0.1:3000, 127.0.0.1:5173 with GET, POST, PUT and Authorization, Content-Type headers. This is appropriate for a local dev tool. No wildcard origins. However, origins are HTTP not HTTPS.\n\n## Dependency Audit\n\n- deny.toml configured to deny vulnerability advisories, deny copyleft licenses, deny wildcard deps\n- No ignored advisories in config\n- Hyper 1.x with full features included (potential attack surface but not used for outbound HTTP currently)\n- No cargo-audit output available to verify current vulnerability status\n- `unsafe` blocks: 2 instances — libc::kill for pidfile check, pre_exec for setpgid. Both are low-risk and well-contained.\n\n## Privacy Assessment\n\nPII handled: Repository paths (could contain usernames in /Users/ paths), shell history/command output (could contain anything the user types), Git metadata (author names, emails), device names (for mobile pairing), optional model provider API keys.\n\nMitigations: No telemetry. No network calls by default. Model call code is unimplemented (stubs), so no data currently leaves the machine. Redaction engine strips secrets from output before storage. Retention policies exist in config (runs: 7 days, events: 30 days, model calls: 90 days).\n\nConcerns: Repository paths stored in plaintext in SQLite — these are filesystem paths, not PII per se but could reveal usernames and project structures. The database has 0600 permissions, providing OS-level protection."
+}

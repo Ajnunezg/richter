@@ -245,9 +245,7 @@ mod tests {
 
     #[test]
     fn test_contains_secrets() {
-        assert!(contains_secrets(
-            "sk-proj-fake-openai-test-key-0000000000"
-        ));
+        assert!(contains_secrets("sk-proj-fake-openai-test-key-0000000000"));
         assert!(!contains_secrets("Hello, world!"));
     }
 

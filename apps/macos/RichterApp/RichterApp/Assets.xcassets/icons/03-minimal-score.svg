@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="cbg3" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#181825"/>
+    </linearGradient>
+    <linearGradient id="line3a" x1="60" y1="175" x2="240" y2="175">
+      <stop offset="0%" stop-color="#6c7086"/>
+      <stop offset="100%" stop-color="#89b4fa"/>
+    </linearGradient>
+    <linearGradient id="line3b" x1="240" y1="175" x2="452" y2="175">
+      <stop offset="0%" stop-color="#89b4fa"/>
+      <stop offset="100%" stop-color="#a6e3a1"/>
+    </linearGradient>
+    <linearGradient id="baton3" x1="235" y1="130" x2="240" y2="210">
+      <stop offset="0%" stop-color="#f38ba8"/>
+      <stop offset="100%" stop-color="#fab387"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#cbg3)"/>
+  <g stroke-width="3" stroke-linecap="round">
+    <line x1="60" y1="175" x2="240" y2="175" stroke="url(#line3a)" opacity="0.5"/>
+    <line x1="240" y1="175" x2="452" y2="175" stroke="url(#line3b)" opacity="0.9"/>
+    <line x1="60" y1="210" x2="260" y2="210" stroke="url(#line3a)" opacity="0.5"/>
+    <line x1="260" y1="210" x2="420" y2="210" stroke="url(#line3b)" opacity="0.9"/>
+    <line x1="60" y1="245" x2="220" y2="245" stroke="url(#line3a)" opacity="0.5"/>
+    <line x1="220" y1="245" x2="440" y2="245" stroke="url(#line3b)" opacity="0.9"/>
+    <line x1="60" y1="280" x2="280" y2="280" stroke="url(#line3a)" opacity="0.5"/>
+    <line x1="280" y1="280" x2="400" y2="280" stroke="url(#line3b)" opacity="0.9"/>
+    <line x1="60" y1="315" x2="250" y2="315" stroke="url(#line3a)" opacity="0.5"/>
+    <line x1="250" y1="315" x2="430" y2="315" stroke="url(#line3b)" opacity="0.9"/>
+  </g>
+  <rect x="235" y="130" width="8" height="80" rx="2" fill="url(#baton3)" transform="rotate(-25 238 175)"/>
+  <circle cx="228" cy="135" r="6" fill="#f38ba8"/>
+</svg>

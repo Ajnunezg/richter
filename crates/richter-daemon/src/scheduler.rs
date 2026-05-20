@@ -14,43 +14,7 @@ use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
 
 use crate::event_bus::{DaemonEvent, EventBus};
-
-// ---------------------------------------------------------------------------
-// Resource classes and their characteristics
-// ---------------------------------------------------------------------------
-
-/// A resource class for categorising commands by their expected resource profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum ResourceClass {
-    /// Heavy build (e.g. `cargo build`, `make -j`)
-    HeavyBuild,
-    /// Heavy test suite (e.g. `cargo test`, `pytest -n auto`)
-    HeavyTest,
-    /// Light lint/format (e.g. `cargo clippy`, `eslint`, `prettier`)
-    LightLint,
-    /// Package install (e.g. `npm install`, `pip install`)
-    Install,
-    /// Dev server / watch mode (long-running, not cacheable)
-    DevServer,
-}
-
-impl ResourceClass {
-    /// Estimated CPU weight for this class (0.0 – 1.0).
-    pub fn cpu_weight(&self) -> f64 {
-        match self {
-            ResourceClass::HeavyBuild => 0.85,
-            ResourceClass::HeavyTest => 0.80,
-            ResourceClass::LightLint => 0.40,
-            ResourceClass::Install => 0.30,
-            ResourceClass::DevServer => 0.15,
-        }
-    }
-
-    /// Whether this class can run concurrently with another instance of the same class.
-    pub fn allows_concurrency(&self) -> bool {
-        matches!(self, ResourceClass::LightLint | ResourceClass::DevServer)
-    }
-}
+pub use richter_core::models::ResourceClass;
 
 // ---------------------------------------------------------------------------
 // System resource tracker
@@ -71,6 +35,8 @@ pub struct ResourceSnapshot {
 
 /// Collects and caches system resource metrics as [`ResourceSnapshot`] values.
 pub struct ResourceMonitor {
+    /// Single `System` instance reused across polls.
+    sys: Arc<ParkingMutex<System>>,
     /// Cached snapshot updated on each `poll`.
     snapshot: ParkingMutex<ResourceSnapshot>,
     /// Time of last poll.
@@ -85,6 +51,7 @@ impl ResourceMonitor {
         let snapshot = collect_snapshot(&sys);
 
         Self {
+            sys: Arc::new(ParkingMutex::new(sys)),
             snapshot: ParkingMutex::new(snapshot),
             last_poll: ParkingMutex::new(Instant::now()),
         }
@@ -92,7 +59,7 @@ impl ResourceMonitor {
 
     /// Refresh the resource snapshot and return it.
     pub fn poll(&self) -> ResourceSnapshot {
-        let mut sys = System::new_all();
+        let mut sys = self.sys.lock();
         sys.refresh_all();
         let snapshot = collect_snapshot(&sys);
 
@@ -122,6 +89,7 @@ impl ResourceMonitor {
 impl Clone for ResourceMonitor {
     fn clone(&self) -> Self {
         Self {
+            sys: Arc::clone(&self.sys),
             snapshot: ParkingMutex::new(self.snapshot.lock().clone()),
             last_poll: ParkingMutex::new(*self.last_poll.lock()),
         }
@@ -144,10 +112,18 @@ fn collect_snapshot(sys: &System) -> ResourceSnapshot {
         0.0
     };
 
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let disk_free = disks
+        .list()
+        .iter()
+        .next()
+        .map(|d| d.available_space())
+        .unwrap_or(0);
+
     ResourceSnapshot {
         cpu_percent: cpu,
         memory_percent: mem_pct,
-        disk_free_bytes: 0,
+        disk_free_bytes: disk_free,
         timestamp: Instant::now(),
     }
 }
@@ -173,6 +149,8 @@ pub struct SchedulerConfig {
     pub repo_max: usize,
     /// Maximum queue length before backpressure kicks in.
     pub queue_max: usize,
+    /// Minimum free disk space (bytes) to accept new runs.
+    pub min_disk_free_bytes: u64,
 }
 
 impl Default for SchedulerConfig {
@@ -181,6 +159,7 @@ impl Default for SchedulerConfig {
             global_max: 6,
             repo_max: 3,
             queue_max: 64,
+            min_disk_free_bytes: 100 * 1024 * 1024, // 100 MB
         }
     }
 }
@@ -229,19 +208,32 @@ pub struct Scheduler {
     config: SchedulerConfig,
     /// Pending run permits (run_id to permit tracking).
     active: Arc<DashMap<String, ActivePermit>>,
+    /// Signal that wakes the queue processor when permits are released.
+    queue_notifier: Arc<Notify>,
 }
 
-#[allow(dead_code)]
 struct ActivePermit {
+    #[allow(dead_code)]
     repo: String,
+    /// Resource class of this active run.
+    class: ResourceClass,
+    // SemaphorePermits are intentionally not read—their sole purpose is
+    // RAII: they release permits when dropped.
+    #[allow(dead_code)]
     global_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    #[allow(dead_code)]
     repo_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl Scheduler {
-    /// Create a new scheduler.
-    pub fn new(config: SchedulerConfig, event_bus: EventBus, monitor: ResourceMonitor) -> Self {
-        Self {
+    /// Create a new scheduler and start the queue-processor task.
+    pub fn new(
+        config: SchedulerConfig,
+        event_bus: EventBus,
+        monitor: ResourceMonitor,
+    ) -> Arc<Self> {
+        let queue_notifier = Arc::new(Notify::new());
+        let sched = Arc::new(Self {
             concurrency: Arc::new(ConcurrencyState {
                 global: Arc::new(Semaphore::new(config.global_max)),
                 repos: DashMap::new(),
@@ -251,7 +243,24 @@ impl Scheduler {
             event_bus,
             config,
             active: Arc::new(DashMap::new()),
-        }
+            queue_notifier: queue_notifier.clone(),
+        });
+
+        // Spawn the queue processor that wakes whenever a permit is released.
+        let sched_clone = Arc::clone(&sched);
+        tokio::spawn(async move {
+            loop {
+                queue_notifier.notified().await;
+                sched_clone.process_queue().await;
+            }
+        });
+
+        sched
+    }
+
+    /// Return a reference to the resource monitor for system metrics.
+    pub fn resource_monitor(&self) -> &ResourceMonitor {
+        &self.monitor
     }
 
     /// Request permission to run a command.
@@ -262,14 +271,29 @@ impl Scheduler {
     pub async fn acquire(
         &self,
         run_id: &str,
-        repo: &str,
+        repo: &std::path::Path,
         command: &str,
         class: ResourceClass,
     ) -> Option<Arc<Notify>> {
+        let snap = self.monitor.current();
+        if snap.disk_free_bytes < self.config.min_disk_free_bytes {
+            warn!(
+                "Rejecting run {run_id}: disk free {} bytes < threshold {} bytes",
+                snap.disk_free_bytes, self.config.min_disk_free_bytes
+            );
+            return None;
+        }
+
         if self.can_run_immediately(repo, &class) {
-            self.reserve_permits(run_id, repo).await;
-            debug!("Immediately scheduled run {run_id} [{:?}] in {repo}", class);
-            return Some(Arc::new(Notify::new()));
+            self.reserve_permits(run_id, repo, class).await;
+            debug!(
+                "Immediately scheduled run {run_id} [{:?}] in {}",
+                class,
+                repo.display()
+            );
+            let notify = Arc::new(Notify::new());
+            notify.notify_one();
+            return Some(notify);
         }
 
         // Otherwise, enqueue
@@ -282,93 +306,43 @@ impl Scheduler {
         let ready = Arc::new(Notify::new());
         let entry = QueuedRun {
             run_id: run_id.to_string(),
-            repo: repo.to_string(),
+            repo: repo.to_string_lossy().into_owned(),
             command: command.to_string(),
             class,
             enqueued_at: Instant::now(),
             ready: ready.clone(),
             priority: 10,
         };
-        let entry_enqueued_at = entry.enqueued_at;
         queue.push_back(entry);
+        let position = queue.len();
+        drop(queue);
 
-        let estimated_wait = queue.len() as u64 * 1000;
+        let estimated_wait = position as u64 * 1000;
         self.event_bus.emit(DaemonEvent::RunQueued {
             run_id: run_id.to_string(),
-            repo: repo.to_string(),
+            repo: repo.to_string_lossy().into_owned(),
             reason: format!("{:?} resource constrained", class),
             estimated_wait_ms: estimated_wait,
         });
 
         info!(
-            "Enqueued run {run_id} [{:?}] in {repo} (position: {})",
+            "Enqueued run {run_id} [{:?}] in {} (position: {})",
             class,
-            queue.len()
+            repo.display(),
+            position
         );
-        drop(queue);
-
-        // Spawn a background task to poll readiness
-        let ready_clone = ready.clone();
-        let concurrency = self.concurrency.clone();
-        let active = self.active.clone();
-        let run_id_owned = run_id.to_string();
-        let repo_owned = repo.to_string();
-        let event_bus = self.event_bus.clone();
-        let monitor_owned = self.monitor.clone();
-
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-
-                if monitor_owned.is_under_pressure() {
-                    continue;
-                }
-
-                let permit = concurrency.global.clone().try_acquire_owned().ok();
-                if permit.is_none() {
-                    continue;
-                }
-
-                let repo_sem = concurrency
-                    .repos
-                    .entry(repo_owned.clone())
-                    .or_insert_with(|| Arc::new(Semaphore::new(6)))
-                    .clone();
-                let repo_permit = repo_sem.try_acquire_owned().ok();
-                if repo_permit.is_none() {
-                    drop(permit);
-                    continue;
-                }
-
-                active.insert(
-                    run_id_owned.clone(),
-                    ActivePermit {
-                        repo: repo_owned.clone(),
-                        global_permit: permit,
-                        repo_permit,
-                    },
-                );
-
-                let queue_ms = entry_enqueued_at.elapsed().as_millis() as u64;
-                event_bus.emit(DaemonEvent::RunDequeued {
-                    run_id: run_id_owned.clone(),
-                    queue_time_ms: queue_ms,
-                });
-
-                ready_clone.notify_one();
-                break;
-            }
-        });
 
         Some(ready)
     }
 
-    /// Release all permits held by a run.
+    /// Release all permits held by a run and wake the queue processor.
     pub fn release(&self, run_id: &str) {
         if let Some((_, permit)) = self.active.remove(run_id) {
             debug!("Released permits for run {run_id}");
             drop(permit);
         }
+        // Wake queue processor so it can attempt to schedule waiting runs.
+        self.queue_notifier.notify_waiters();
     }
 
     /// Force-kill all active runs in a repository.
@@ -397,9 +371,14 @@ impl Scheduler {
         self.monitor.current()
     }
 
+    /// Return the number of available global scheduler permits.
+    pub fn available_permits(&self) -> usize {
+        self.concurrency.global.available_permits()
+    }
+
     // -- Private helpers --
 
-    fn can_run_immediately(&self, repo: &str, class: &ResourceClass) -> bool {
+    fn can_run_immediately(&self, repo: &std::path::Path, class: &ResourceClass) -> bool {
         if self.monitor.is_under_pressure() {
             return false;
         }
@@ -409,10 +388,11 @@ impl Scheduler {
             return false;
         }
 
+        let repo_key = repo.to_string_lossy().into_owned();
         let repo_sem = self
             .concurrency
             .repos
-            .entry(repo.to_string())
+            .entry(repo_key)
             .or_insert_with(|| Arc::new(Semaphore::new(self.config.repo_max)))
             .clone();
         if repo_sem.available_permits() == 0 {
@@ -420,10 +400,14 @@ impl Scheduler {
         }
 
         if !class.allows_concurrency() {
+            let repo_str = repo.to_string_lossy();
+            // Check same-class concurrency, not all-run concurrency.
             let active_same_class = self
                 .active
                 .iter()
-                .filter(|entry| entry.value().repo == repo)
+                .filter(|entry| {
+                    entry.value().repo == repo_str.as_ref() && entry.value().class == *class
+                })
                 .count();
             if active_same_class > 0 {
                 return false;
@@ -433,7 +417,8 @@ impl Scheduler {
         true
     }
 
-    async fn reserve_permits(&self, run_id: &str, repo: &str) {
+    async fn reserve_permits(&self, run_id: &str, repo: &std::path::Path, class: ResourceClass) {
+        let repo_key = repo.to_string_lossy().into_owned();
         let global = Arc::clone(&self.concurrency.global)
             .acquire_owned()
             .await
@@ -441,7 +426,7 @@ impl Scheduler {
         let repo_sem = self
             .concurrency
             .repos
-            .entry(repo.to_string())
+            .entry(repo_key)
             .or_insert_with(|| Arc::new(Semaphore::new(self.config.repo_max)))
             .clone();
         let repo_permit: Option<tokio::sync::OwnedSemaphorePermit> =
@@ -450,16 +435,54 @@ impl Scheduler {
         self.active.insert(
             run_id.to_string(),
             ActivePermit {
-                repo: repo.to_string(),
+                repo: repo.to_string_lossy().into_owned(),
+                class,
                 global_permit: global,
                 repo_permit,
             },
         );
     }
 
-    #[allow(dead_code)]
-    fn drain_queue(&self) {
-        // Placeholder: woken by spawned tasks
+    /// Drain the queue and start all runs that can now acquire permits.
+    async fn process_queue(&self) {
+        loop {
+            let entry = {
+                let queue = self.queue.lock();
+                let entry = queue.front().cloned();
+                drop(queue);
+                entry
+            };
+
+            let Some(entry) = entry else {
+                break;
+            };
+
+            if !self.can_run_immediately(std::path::Path::new(&entry.repo), &entry.class) {
+                break;
+            }
+
+            // Dequeue and reserve
+            {
+                let mut queue = self.queue.lock();
+                let _ = queue.pop_front();
+                drop(queue);
+            }
+
+            self.reserve_permits(
+                &entry.run_id,
+                std::path::Path::new(&entry.repo),
+                entry.class,
+            )
+            .await;
+
+            let queue_ms = entry.enqueued_at.elapsed().as_millis() as u64;
+            self.event_bus.emit(DaemonEvent::RunDequeued {
+                run_id: entry.run_id.clone(),
+                queue_time_ms: queue_ms,
+            });
+
+            entry.ready.notify_one();
+        }
     }
 }
 
@@ -482,7 +505,12 @@ mod tests {
         let sched = Scheduler::new(config, bus, monitor);
 
         let notify = sched
-            .acquire("run-1", "/repo", "cargo fmt", ResourceClass::LightLint)
+            .acquire(
+                "run-1",
+                std::path::Path::new("/repo"),
+                "cargo fmt",
+                ResourceClass::LightLint,
+            )
             .await;
         assert!(notify.is_some());
         assert_eq!(sched.active_count(), 1);
@@ -496,5 +524,28 @@ mod tests {
         let json = serde_json::to_string(&ResourceClass::HeavyBuild).unwrap();
         let parsed: ResourceClass = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, ResourceClass::HeavyBuild);
+    }
+
+    #[test]
+    fn test_resource_monitor_reuses_system() {
+        let monitor = ResourceMonitor::new();
+
+        // First poll
+        let snap1 = monitor.poll();
+        assert!(snap1.cpu_percent >= 0.0);
+        assert!(snap1.memory_percent >= 0.0);
+        assert!(snap1.disk_free_bytes > 0);
+
+        // Sleep briefly to allow metrics to change
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Second poll — should not create a new System, just refresh
+        let snap2 = monitor.poll();
+        assert!(snap2.cpu_percent >= 0.0);
+        assert!(snap2.memory_percent >= 0.0);
+        assert!(snap2.disk_free_bytes > 0);
+
+        // The timestamp should differ
+        assert!(snap2.timestamp > snap1.timestamp);
     }
 }

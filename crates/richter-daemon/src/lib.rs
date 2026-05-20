@@ -4,10 +4,13 @@
 //! Runs as the current user via SMAppService/LoginItem. Survives UI app restarts.
 
 pub mod api;
+pub mod error;
 pub mod event_bus;
 pub mod importance;
 pub mod mcp_bridge;
-pub mod mobile_gateway;
+pub mod metrics;
+pub mod mobile;
+pub mod rate_limiter;
 pub mod run_manager;
 pub mod scheduler;
 pub mod supervisor;

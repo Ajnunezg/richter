@@ -1,10 +1,13 @@
-.PHONY: build test lint fmt check clean run install
+.PHONY: build test bench lint fmt check clean run install
 
 build:
 	cargo build --workspace --release
 
 test:
 	cargo test --workspace
+
+bench:
+	cargo bench --workspace
 
 lint:
 	cargo clippy --workspace --all-features -- -D warnings

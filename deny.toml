@@ -1,0 +1,14 @@
+[advisories]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "warn"
+ignore = []
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0", "ISC", "BSD-2-Clause", "Zlib", "BSL-1.0", "CC0-1.0", "OpenSSL"]
+copyleft = "deny"
+default = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="dotbg" x1="0" y1="0" x2="512" y2="512">
+      <stop offset="0%" stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#dotbg)"/>
+  <g fill="#f45b69">
+    <circle cx="110" cy="280" r="8" opacity="0.9"/>
+    <circle cx="110" cy="250" r="6" opacity="0.6"/>
+    <circle cx="110" cy="225" r="4" opacity="0.35"/>
+    <circle cx="150" cy="260" r="10" opacity="0.95"/>
+    <circle cx="150" cy="225" r="7" opacity="0.7"/>
+    <circle cx="150" cy="195" r="5" opacity="0.4"/>
+    <circle cx="190" cy="240" r="12" opacity="1"/>
+    <circle cx="190" cy="200" r="8" opacity="0.75"/>
+    <circle cx="190" cy="165" r="5" opacity="0.45"/>
+    <circle cx="230" cy="270" r="9" opacity="0.85"/>
+    <circle cx="230" cy="235" r="6" opacity="0.55"/>
+    <circle cx="230" cy="205" r="4" opacity="0.3"/>
+    <circle cx="270" cy="250" r="11" opacity="0.9"/>
+    <circle cx="270" cy="210" r="7" opacity="0.65"/>
+    <circle cx="270" cy="175" r="5" opacity="0.4"/>
+    <circle cx="310" cy="230" r="13" opacity="0.95"/>
+    <circle cx="310" cy="185" r="9" opacity="0.7"/>
+    <circle cx="310" cy="145" r="6" opacity="0.45"/>
+    <circle cx="350" cy="260" r="10" opacity="0.85"/>
+    <circle cx="350" cy="220" r="7" opacity="0.6"/>
+    <circle cx="350" cy="185" r="4" opacity="0.35"/>
+    <circle cx="390" cy="280" r="8" opacity="0.75"/>
+    <circle cx="390" cy="250" r="5" opacity="0.5"/>
+    <circle cx="390" cy="225" r="3" opacity="0.25"/>
+  </g>
+  <g stroke="#f45b69" stroke-width="1.5" opacity="0.2" stroke-linecap="round">
+    <line x1="110" y1="280" x2="150" y2="260"/>
+    <line x1="150" y1="260" x2="190" y2="240"/>
+    <line x1="190" y1="240" x2="230" y2="270"/>
+    <line x1="230" y1="270" x2="270" y2="250"/>
+    <line x1="270" y1="250" x2="310" y2="230"/>
+    <line x1="310" y1="230" x2="350" y2="260"/>
+    <line x1="350" y1="260" x2="390" y2="280"/>
+  </g>
+  <rect x="248" y="360" width="8" height="45" rx="2" fill="#f45b69" transform="rotate(-10 252 382)"/>
+  <rect x="240" y="398" width="24" height="3" rx="1" fill="#f45b69" transform="rotate(-10 252 400)"/>
+</svg>

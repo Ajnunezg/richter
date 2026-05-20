@@ -46,8 +46,7 @@ cargo llvm-cov --all-features --lcov --output-path lcov.info
 
 1. **Unit tests** cover individual functions and methods across all crates
 2. **Integration tests** verify API auth, run-or-join lifecycle, scheduler behavior, and event bus
-3. **Property tests** ensure fingerprint determinism, cache freshness, and scheduling invariants
-4. **Stress tests** validate concurrent run_or_join calls from multiple simulated agents
+3. **Concurrency tests** validate concurrent run_or_join calls from multiple simulated agents (8-20 concurrent tasks)
 
 ## Code Style
 

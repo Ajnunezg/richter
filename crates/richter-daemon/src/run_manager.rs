@@ -8,100 +8,68 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use lru::LruCache;
 use parking_lot::Mutex as ParkingMutex;
+use std::io::Read as IoRead;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::event_bus::{DaemonEvent, EventBus};
-use richter_core::db::Database;
-use crate::scheduler::{ResourceClass, Scheduler};
+use crate::scheduler::Scheduler;
 use crate::supervisor::{ProcessSupervisor, RunSpec};
+use richter_core::db::Database;
+use richter_core::models::{CommandClass, ResourceClass};
 
-/// A command fingerprint used for deduplication.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CommandFingerprint {
-    /// Normalized command string.
+    /// The normalized command string (for display/debugging).
     pub command: String,
-    /// SHA-256 of the command.
-    pub command_hash: String,
-    /// SHA-256 of the working directory / repo path.
-    pub context_hash: String,
-    /// SHA-256 of relevant environment variables.
-    pub env_hash: String,
-    /// Classification tag.
-    pub classification: String,
+    /// BLAKE3 fingerprint hash (includes cwd).
+    pub hash: String,
+    /// BLAKE3 cross-worktree hash (excludes cwd).
+    pub cross_worktree_hash: String,
+    /// Classification.
+    pub classification: CommandClass,
 }
 
 impl CommandFingerprint {
-    /// Create a fingerprint from a run specification.
-    pub fn from_spec(spec: &RunSpec) -> Self {
-        use sha2::{Digest, Sha256};
-
-        let mut cmd_hasher = Sha256::new();
-        cmd_hasher.update(spec.command.as_bytes());
-        let command_hash = hex::encode(cmd_hasher.finalize());
-
-        // Context hash: repo path + HEAD SHA + dirty state
-        let mut ctx_hasher = Sha256::new();
-        ctx_hasher.update(spec.repo.as_bytes());
-        if let Some(ref sha) = spec.head_sha {
-            ctx_hasher.update(sha.as_bytes());
-        }
-        ctx_hasher.update(if spec.is_dirty { b"dirty" } else { b"clean" });
-        let context_hash = hex::encode(ctx_hasher.finalize());
-
-        let mut env_hasher = Sha256::new();
-        let mut keys: Vec<_> = spec.env.keys().collect();
-        keys.sort();
-        for k in keys {
-            env_hasher.update(k.as_bytes());
-            env_hasher.update(spec.env.get(k).unwrap_or(&String::new()).as_bytes());
-        }
-        // Incorporate lockfile hash if present
-        if let Some(ref lh) = spec.lockfile_hash {
-            env_hasher.update(lh.as_bytes());
-        }
-        let env_hash = hex::encode(env_hasher.finalize());
+    /// Create a fingerprint from a run specification using the canonical BLAKE3
+    /// fingerprint from `richter_core`.
+    pub async fn from_spec(spec: &RunSpec) -> Self {
+        let classified = spec.to_classified_command();
+        let cwd = spec.repo.to_string_lossy();
+        let hash = richter_core::fingerprint::fingerprint(&classified, &cwd).await;
+        let cross_worktree_hash =
+            richter_core::fingerprint::fingerprint_cross_worktree(&classified, &cwd).await;
 
         Self {
             command: spec.command.clone(),
-            command_hash,
-            context_hash,
-            env_hash,
-            classification: spec.classification.clone(),
+            hash,
+            cross_worktree_hash,
+            classification: spec.classification,
         }
     }
 
     /// Build a cross-worktree cache key (excludes worktree path).
     pub fn cross_worktree_key(&self) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(self.command.as_bytes());
-        hasher.update(self.command_hash.as_bytes());
-        hasher.update(self.env_hash.as_bytes());
-        hasher.update(self.classification.as_bytes());
-        hex::encode(hasher.finalize())
+        self.cross_worktree_hash.clone()
     }
 
     /// Build a cache key string from this fingerprint (for DB lookups).
     pub fn cache_key(&self) -> String {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(self.command.as_bytes());
-        hasher.update(self.command_hash.as_bytes());
-        hasher.update(self.context_hash.as_bytes());
-        hasher.update(self.env_hash.as_bytes());
-        hasher.update(self.classification.as_bytes());
-        hex::encode(hasher.finalize())
+        self.hash.clone()
     }
 
     /// Check if this fingerprint is a subset of another.
+    ///
+    /// Two fingerprints are considered subsets when they share the same
+    /// classification and the same command string (modulo test-target
+    /// specificity). This is used for test superset/subset matching.
     pub fn is_subset_of(&self, other: &CommandFingerprint) -> bool {
-        self.command_hash == other.command_hash
-            && self.context_hash == other.context_hash
-            && self.classification == other.classification
+        self.command == other.command && self.classification == other.classification
     }
 
     /// Check if this fingerprint is a superset of another.
@@ -113,9 +81,13 @@ impl CommandFingerprint {
     /// Returns the package name, test path, or filter expression.
     pub fn test_target(&self) -> Option<String> {
         let cmd = &self.command;
-        for (prefix, marker) in [(" -p ", ""), (" --package ", ""),
-                                  (" pytest ", ".py"), (" jest ", ".test."),
-                                  (" vitest ", ".test.")] {
+        for (prefix, marker) in [
+            (" -p ", ""),
+            (" --package ", ""),
+            (" pytest ", ".py"),
+            (" jest ", ".test."),
+            (" vitest ", ".test."),
+        ] {
             if let Some(pos) = cmd.find(prefix) {
                 let rest = &cmd[pos + prefix.len()..];
                 let word = rest.split_whitespace().next()?;
@@ -147,7 +119,11 @@ pub struct CachedResult {
 
 impl CachedResult {
     /// Whether this cached result is still fresh (within `max_age`).
-    pub fn is_fresh(&self, max_age: Duration) -> bool {
+    ///
+    /// This method performs filesystem I/O and should be called from a
+    /// blocking context (e.g., `spawn_blocking`). It uses file modification
+    /// times to check if any source files changed since the cache was created.
+    pub fn is_fresh_blocking(&self, max_age: Duration) -> bool {
         let age = Utc::now().signed_duration_since(self.cached_at);
         // Check time-based freshness
         if age.to_std().unwrap_or(Duration::ZERO) >= max_age {
@@ -157,19 +133,48 @@ impl CachedResult {
         for file_path in &self.changed_files {
             if let Ok(meta) = std::fs::metadata(file_path) {
                 if let Ok(mtime) = meta.modified() {
-                    let mtime_age = mtime
+                    let mtime_millis = mtime
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default();
-                    let cached_age = self.cached_at
-                        .timestamp_millis() as u64;
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    let cached_millis = self.cached_at.timestamp_millis();
                     // If file was modified after cache, it's stale
-                    if mtime_age.as_millis() as i64 > cached_age as i64 {
+                    if mtime_millis > cached_millis {
                         return false;
                     }
                 }
             }
         }
         true
+    }
+
+    /// Async wrapper for `is_fresh_blocking` that runs file I/O on a blocking thread.
+    pub async fn is_fresh(&self, max_age: Duration) -> bool {
+        let changed_files = self.changed_files.clone();
+        let cached_at = self.cached_at;
+        tokio::task::spawn_blocking(move || {
+            let age = Utc::now().signed_duration_since(cached_at);
+            if age.to_std().unwrap_or(Duration::ZERO) >= max_age {
+                return false;
+            }
+            for file_path in &changed_files {
+                if let Ok(meta) = std::fs::metadata(file_path) {
+                    if let Ok(mtime) = meta.modified() {
+                        let mtime_millis = mtime
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64;
+                        let cached_millis = cached_at.timestamp_millis();
+                        if mtime_millis > cached_millis {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        })
+        .await
+        .unwrap_or(true)
     }
 }
 
@@ -225,8 +230,9 @@ pub enum RunOutcome {
     },
 }
 
-/// An active run entry in the run manager.
-#[derive(Debug)]
+// NOTE: started_at and is_dev_server are intentionally unused at this
+// stage but are part of the ActiveRun schema and may be surfaced in
+// telemetry/debugging later.
 #[allow(dead_code)]
 struct ActiveRun {
     /// Run specification.
@@ -237,6 +243,10 @@ struct ActiveRun {
     subscribers: Vec<watch::Sender<i32>>,
     /// Whether this is a dev-server (long-running).
     is_dev_server: bool,
+    /// If the run completed before a late joiner subscribed, the
+    /// (exit_code, output) tuple is stored here so the joiner can
+    /// still discover and join the completed run.
+    completion: Option<(i32, String)>,
 }
 
 /// Core run-or-join orchestrator.
@@ -245,12 +255,14 @@ pub struct RunManager {
     active_by_fingerprint: Arc<DashMap<CommandFingerprint, Arc<ParkingMutex<ActiveRun>>>>,
     /// Active runs by run ID.
     active_by_id: Arc<DashMap<String, Arc<ParkingMutex<ActiveRun>>>>,
-    /// Result cache.
-    cache: Arc<DashMap<CommandFingerprint, CachedResult>>,
+    /// Result cache with LRU eviction.
+    cache: Arc<ParkingMutex<LruCache<CommandFingerprint, CachedResult>>>,
     /// Persistent SQLite database handle for cache persistence.
     db: Option<Arc<Database>>,
     /// "Richter Saved You" counter: cache hits today.
     cache_hits_today: Arc<std::sync::atomic::AtomicU64>,
+    /// Date (UTC) of the last cache hit — used to reset the counter at midnight.
+    cache_hits_date: Arc<ParkingMutex<chrono::NaiveDate>>,
     /// "Richter Saved You" counter: duplicate runs avoided.
     duplicates_prevented: Arc<std::sync::atomic::AtomicU64>,
     /// Scheduler for resource-aware dispatch.
@@ -261,6 +273,13 @@ pub struct RunManager {
     event_bus: EventBus,
     /// Result cache TTL.
     cache_ttl: Duration,
+    /// Maximum in-memory cache entries (reserved for future use).
+    #[allow(dead_code)]
+    cache_capacity: NonZeroUsize,
+
+    /// Whether to log cache eviction events (reserved for future use).
+    #[allow(dead_code)]
+    log_evictions: bool,
 }
 
 impl RunManager {
@@ -271,17 +290,21 @@ impl RunManager {
         db: Option<Arc<Database>>,
         event_bus: EventBus,
     ) -> Self {
+        let cache_capacity = NonZeroUsize::new(10_000).unwrap();
         Self {
             active_by_fingerprint: Arc::new(DashMap::new()),
             active_by_id: Arc::new(DashMap::new()),
-            cache: Arc::new(DashMap::new()),
+            cache: Arc::new(ParkingMutex::new(LruCache::new(cache_capacity))),
             db,
             cache_hits_today: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            cache_hits_date: Arc::new(ParkingMutex::new(Utc::now().date_naive())),
             duplicates_prevented: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             scheduler,
             supervisor,
             event_bus,
             cache_ttl: Duration::from_secs(300),
+            cache_capacity,
+            log_evictions: true,
         }
     }
 
@@ -293,13 +316,45 @@ impl RunManager {
 
     /// Run or join a command.
     pub async fn run_or_join(&self, spec: RunSpec) -> Result<RunOutcome> {
-        let fingerprint = CommandFingerprint::from_spec(&spec);
+        // 0a. Validate repo path: canonicalize first, then verify within allowed roots.
+        let canonical_repo = match spec.repo.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(RunOutcome::Rejected {
+                    reason: format!("Invalid repo path '{}': {}", spec.repo.display(), e),
+                });
+            }
+        };
+        let home = std::env::var("HOME").unwrap_or_default();
+        let home_path = std::path::PathBuf::from(&home);
+        let allowed_tmp_roots: [&std::path::Path; 3] =
+            ["/tmp".as_ref(), "/private/tmp".as_ref(), "/var".as_ref()];
+        let in_tmp = allowed_tmp_roots
+            .iter()
+            .any(|root| canonical_repo.starts_with(root));
+        if !canonical_repo.starts_with(&home_path) && !in_tmp {
+            return Ok(RunOutcome::Rejected {
+                reason: format!(
+                    "Repo path {} is outside allowed directories",
+                    canonical_repo.display()
+                ),
+            });
+        }
+
+        tracing::debug!("run_or_join: computing fingerprint for '{}'", spec.command);
+        let fingerprint = CommandFingerprint::from_spec(&spec).await;
+        tracing::debug!("run_or_join: fingerprint computed for '{}'", spec.command);
 
         // 0. Unknown commands always pass through — no caching, dedup, or scheduling.
-        if spec.classification == "unknown" {
+        if spec.classification == CommandClass::Unknown {
             info!("Pass-through unknown command: {}", spec.command);
             let outcome = self.start_new(spec).await?;
-            if let RunOutcome::Started { run_id, queue_time_ms, .. } = outcome {
+            if let RunOutcome::Started {
+                run_id,
+                queue_time_ms,
+                ..
+            } = outcome
+            {
                 return Ok(RunOutcome::Started {
                     run_id,
                     queue_time_ms,
@@ -311,7 +366,10 @@ impl RunManager {
 
         // 1. Destructive command preview gate
         if self.is_destructive(&spec.command) && !spec.force && !spec.preview {
-            info!("Destructive command blocked — preview required: {}", spec.command);
+            info!(
+                "Destructive command blocked — preview required: {}",
+                spec.command
+            );
             if let Some(msg) = self.generate_preview(&spec.command) {
                 return Ok(RunOutcome::Rejected {
                     reason: format!("DESTRUCTIVE: {}. Re-run with --force to execute.", msg),
@@ -321,9 +379,14 @@ impl RunManager {
         }
         if self.is_destructive(&spec.command) {
             info!("Pass-through destructive command: {}", spec.command);
-                        let outcome = self.start_new(spec.clone()).await?;
+            let outcome = self.start_new(spec.clone()).await?;
             // Attach reason to Started outcome
-            if let RunOutcome::Started { run_id, queue_time_ms, .. } = outcome {
+            if let RunOutcome::Started {
+                run_id,
+                queue_time_ms,
+                ..
+            } = outcome
+            {
                 return Ok(RunOutcome::Started {
                     run_id,
                     queue_time_ms,
@@ -337,7 +400,12 @@ impl RunManager {
         if self.is_dev_server(&spec) {
             info!("Dev-server detected: {}", spec.command);
             let outcome = self.start_new(spec).await?;
-            if let RunOutcome::Started { run_id, queue_time_ms, .. } = outcome {
+            if let RunOutcome::Started {
+                run_id,
+                queue_time_ms,
+                ..
+            } = outcome
+            {
                 return Ok(RunOutcome::Started {
                     run_id,
                     queue_time_ms,
@@ -348,16 +416,14 @@ impl RunManager {
         }
 
         // 3. Check in-memory cache
-        if let Some(cached) = self.cache.get(&fingerprint) {
-            if cached.is_fresh(self.cache_ttl) {
-                self.cache_hits_today.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                debug!(
-                    "Cache hit for fingerprint {hash}",
-                    hash = fingerprint.command_hash
-                );
+        let cached_opt = self.cache.lock().get(&fingerprint).cloned();
+        if let Some(cached) = cached_opt {
+            if cached.is_fresh_blocking(self.cache_ttl) {
+                self.increment_cache_hits();
+                debug!("Cache hit for fingerprint {hash}", hash = fingerprint.hash);
                 self.event_bus.emit(DaemonEvent::RunCached {
                     run_id: cached.run_id.clone(),
-                    repo: spec.repo.clone(),
+                    repo: spec.repo.to_string_lossy().into_owned(),
                     command: spec.command.clone(),
                     cache_age: format!(
                         "{}s",
@@ -383,28 +449,50 @@ impl RunManager {
         // 3b. Check persistent DB cache (includes cross-worktree)
         if let Some(db) = self.db.as_ref() {
             let cache_key = fingerprint.cache_key();
-            let mut entry = db.get_cache_entry(&cache_key).ok().flatten();
+            let mut entry = db.get_cache_entry(&cache_key).await.ok().flatten();
             if entry.is_none() {
                 let cross_key = fingerprint.cross_worktree_key();
                 if cross_key != cache_key {
-                    entry = db.get_cache_entry(&cross_key).ok().flatten();
+                    entry = db.get_cache_entry(&cross_key).await.ok().flatten();
                 }
             }
             if let Some(entry) = entry {
-                self.cache_hits_today.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.increment_cache_hits();
                 debug!(
                     "DB cache hit for fingerprint {hash}",
-                    hash = fingerprint.command_hash
+                    hash = fingerprint.hash
                 );
+
+                // Read and decompress cached output from the output_path
+                let cached_output = match &entry.output_path {
+                    Some(path) if std::path::Path::new(path).exists() => {
+                        match std::fs::read(path) {
+                            Ok(data) => {
+                                // Try gzip decompression first; fall back to raw bytes.
+                                if data.starts_with(&[0x1f, 0x8b]) {
+                                    let mut decoded = String::new();
+                                    let _ = flate2::read::GzDecoder::new(data.as_slice())
+                                        .read_to_string(&mut decoded);
+                                    decoded
+                                } else {
+                                    String::from_utf8(data).unwrap_or_default()
+                                }
+                            }
+                            Err(_) => String::new(),
+                        }
+                    }
+                    _ => String::new(),
+                };
+
                 self.event_bus.emit(DaemonEvent::RunCached {
                     run_id: entry.run_id.clone(),
-                    repo: spec.repo.clone(),
+                    repo: spec.repo.to_string_lossy().into_owned(),
                     command: spec.command.clone(),
                     cache_age: entry.cached_at.clone(),
                 });
                 return Ok(RunOutcome::Cached {
                     exit_code: entry.exit_code,
-                    output: String::new(),
+                    output: cached_output,
                     cache_age: format!("{} (DB)", entry.cached_at),
                     reason: Some("served from persistent database cache".into()),
                 });
@@ -412,37 +500,79 @@ impl RunManager {
         }
 
         // 4. Join existing equivalent run
-        if let Some(active) = self.active_by_fingerprint.get(&fingerprint) {
-            self.duplicates_prevented.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let (tx, mut rx) = watch::channel(-1);
+        if let Some(active_entry) = self.active_by_fingerprint.get(&fingerprint) {
+            let active_arc = active_entry.value().clone();
+            drop(active_entry); // Release DashMap shard read lock before await
+            self.duplicates_prevented
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Check completion AND subscribe under the same lock to avoid a
+            // race where the completion hook finishes between the check and
+            // the subscribe, leaving the subscriber waiting forever.
+            let rx_opt: Option<watch::Receiver<i32>>;
             {
-                let mut run = active.lock();
+                let mut run = active_arc.lock();
+                if let Some((_code, _output)) = &run.completion {
+                    let run_id = run.spec.run_id.clone();
+                    return Ok(RunOutcome::Joined {
+                        run_id,
+                        reason: Some(
+                            "exact fingerprint match — joining completed equivalent run".into(),
+                        ),
+                    });
+                }
+                // Not completed yet — subscribe for the exit code.
+                let (tx, rx) = watch::channel(-1);
                 run.subscribers.push(tx);
+                rx_opt = Some(rx);
             }
-            let _exit_code = rx.wait_for(|c| *c >= 0).await.map(|r| *r).unwrap_or(-1);
-            let run_id = { active.lock().spec.run_id.clone() };
-            return Ok(RunOutcome::Joined { run_id, reason: Some("exact fingerprint match — joining existing equivalent run".into()) });
+
+            if let Some(mut rx) = rx_opt {
+                let _exit_code = rx.wait_for(|c| *c >= 0).await.map(|r| *r).unwrap_or(-1);
+            }
+            let run_id = { active_arc.lock().spec.run_id.clone() };
+            return Ok(RunOutcome::Joined {
+                run_id,
+                reason: Some("exact fingerprint match — joining existing equivalent run".into()),
+            });
         }
 
         // 5. Check superset/subset relations
         if let Some(parent_run) = self.find_superset(&fingerprint) {
-            self.duplicates_prevented.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            debug!(
-                "Joining superset run for {hash}",
-                hash = fingerprint.command_hash
-            );
-            let (tx, mut rx) = watch::channel(-1);
+            self.duplicates_prevented
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            debug!("Joining superset run for {hash}", hash = fingerprint.hash);
+
+            let rx_opt: Option<watch::Receiver<i32>>;
             {
                 let mut run = parent_run.lock();
+                if let Some((_code, _output)) = &run.completion {
+                    let run_id = run.spec.run_id.clone();
+                    return Ok(RunOutcome::Joined {
+                        run_id,
+                        reason: Some(
+                            "exact fingerprint match — joining completed equivalent run".into(),
+                        ),
+                    });
+                }
+                let (tx, rx) = watch::channel(-1);
                 run.subscribers.push(tx);
+                rx_opt = Some(rx);
             }
-            let _exit_code = rx.wait_for(|c| *c >= 0).await.map(|r| *r).unwrap_or(-1);
+
+            if let Some(mut rx) = rx_opt {
+                let _exit_code = rx.wait_for(|c| *c >= 0).await.map(|r| *r).unwrap_or(-1);
+            }
             let run_id = { parent_run.lock().spec.run_id.clone() };
-            return Ok(RunOutcome::Joined { run_id, reason: Some("exact fingerprint match — joining existing equivalent run".into()) });
+            return Ok(RunOutcome::Joined {
+                run_id,
+                reason: Some("exact fingerprint match — joining existing equivalent run".into()),
+            });
         }
 
         // 6. Check resource availability
         let class = self.classify_resource(&spec);
+        tracing::debug!("run_or_join step6: calling scheduler.acquire (class={class:?})");
         let _queue_start = std::time::Instant::now();
         let notify = self
             .scheduler
@@ -452,7 +582,11 @@ impl RunManager {
         match notify {
             Some(ready) => {
                 ready.notified().await;
-                self.start_new(spec).await
+                // Use start_or_reserve (atomic check-and-insert) instead of
+                // start_new to close the race where a concurrent agent checks
+                // active_by_fingerprint between our step-4 check and start_new's
+                // insertion, finds nothing, and starts a duplicate run.
+                self.start_or_reserve(spec, fingerprint).await
             }
             None => Ok(RunOutcome::Rejected {
                 reason: "Scheduler queue full".to_string(),
@@ -502,39 +636,60 @@ impl RunManager {
 
     /// Invalidate cache for a fingerprint.
     pub fn invalidate_cache(&self, fingerprint: &CommandFingerprint) {
-        self.cache.remove(fingerprint);
+        self.cache.lock().pop(fingerprint);
     }
 
     /// Invalidate all cache entries for a repo.
+    ///
+    /// This is a best-effort LRU sweep: entries whose run was in the given repo are dropped.
     pub fn invalidate_repo_cache(&self, repo: &str) {
-        self.cache.retain(|_fp, _| {
-            !self
-                .active_by_id
-                .iter()
-                .any(|e| e.value().lock().spec.repo == repo)
-        });
+        let mut guard = self.cache.lock();
+        // LruCache does not support bulk retain by predicate, so rebuild.
+        let keys_to_remove: Vec<_> = guard
+            .iter()
+            .filter(|(_, cached)| {
+                self.active_by_id
+                    .get(&cached.run_id)
+                    .map(|a| a.lock().spec.repo == std::path::Path::new(repo))
+                    .unwrap_or(true)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in keys_to_remove {
+            guard.pop(&k);
+        }
     }
 
     /// Store a result in the cache after a run completes.
     pub fn cache_result(&self, fingerprint: CommandFingerprint, result: CachedResult) {
-        self.cache.insert(fingerprint, result);
+        self.cache.lock().put(fingerprint, result);
     }
 
-
-    /// Get the number of cache hits today.
+    /// Get the number of cache hits today, resetting at midnight UTC.
     pub fn cache_hits_today(&self) -> u64 {
-        self.cache_hits_today.load(std::sync::atomic::Ordering::Relaxed)
+        let today = Utc::now().date_naive();
+        {
+            let mut date = self.cache_hits_date.lock();
+            if *date != today {
+                *date = today;
+                self.cache_hits_today
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        self.cache_hits_today
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get the number of duplicate runs prevented.
     pub fn duplicates_prevented(&self) -> u64 {
-        self.duplicates_prevented.load(std::sync::atomic::Ordering::Relaxed)
+        self.duplicates_prevented
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     // -- Private helpers --
 
     async fn start_new(&self, spec: RunSpec) -> Result<RunOutcome> {
-        let fingerprint = CommandFingerprint::from_spec(&spec);
+        let fingerprint = CommandFingerprint::from_spec(&spec).await;
         let run_id = spec.run_id.clone();
 
         let active = Arc::new(ParkingMutex::new(ActiveRun {
@@ -542,13 +697,13 @@ impl RunManager {
             started_at: Instant::now(),
             subscribers: Vec::new(),
             is_dev_server: self.is_dev_server(&spec),
+            completion: None,
         }));
 
         self.active_by_fingerprint
             .insert(fingerprint.clone(), active.clone());
         self.active_by_id.insert(run_id.clone(), active);
 
-        let repo_for_cache = spec.repo.clone();
         let repo_for_cache = spec.repo.clone();
         let actual_run_id = self.supervisor.spawn(spec).await?;
 
@@ -563,62 +718,91 @@ impl RunManager {
         let run_id_for_cache = actual_run_id.clone();
 
         tokio::spawn(async move {
-            loop {
-                if let Some(code) = supervisor.exit_code(&run_id_for_cache) {
-                    let output = supervisor.get_output(&run_id_for_cache).unwrap_or_default();
+            // Wait for completion via the supervisor's watch channel (event-driven, no polling).
+            let code = supervisor
+                .wait_for_completion(&run_id_for_cache)
+                .await
+                .unwrap_or(-1);
 
-                    let changed: Vec<String> = std::process::Command::new("git")
-                        .args(["diff", "--name-only", "HEAD"])
-                        .current_dir(&repo_for_cache)
-                        .output()
-                        .ok()
-                        .and_then(|o| String::from_utf8(o.stdout).ok())
-                        .map(|s| s.lines().map(String::from).collect())
-                        .unwrap_or_default();
+            let output = supervisor.get_output(&run_id_for_cache).unwrap_or_default();
 
-                    cache.insert(
-                        fingerprint_for_cache.clone(),
-                        CachedResult {
-                            fingerprint: fingerprint_for_cache.clone(),
-                            run_id: run_id_for_cache.clone(),
-                            exit_code: code,
-                            output: output.clone(),
-                            cached_at: Utc::now(),
-                            changed_files: changed,
-                        },
-                    );
+            // Redact secrets from output before caching or persisting.
+            let redacted_output = richter_core::redact::redact(&output);
 
-                    // Persist to DB
-                    if let Some(db) = db_for_completion.as_ref() {
-                        let cache_key = fingerprint_for_cache.cache_key();
-                        let now_iso = Utc::now().to_rfc3339();
-                        if let Err(e) = db.insert_cache_entry(
-                            &uuid::Uuid::new_v4().to_string(),
-                            &cache_key,
-                            &run_id_for_cache,
-                            code,
-                            None,
-                            &now_iso,
-                            None,
-                        ) {
-                            tracing::warn!("Failed to persist cache entry to DB: {e}");
-                        }
-                    }
+            // Run git diff in a blocking context to avoid blocking the async runtime.
+            let repo_path = repo_for_cache.clone();
+            let changed: Vec<String> = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("git")
+                    .args(["diff", "--name-only", "HEAD"])
+                    .current_dir(&repo_path)
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.lines().map(String::from).collect())
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
 
-                    if let Some(active) = active_by_fp.get(&fingerprint_for_cache) {
-                        let mut run = active.value().lock();
-                        for tx in run.subscribers.drain(..) {
-                            let _ = tx.send(code);
-                        }
-                    }
+            cache.lock().put(
+                fingerprint_for_cache.clone(),
+                CachedResult {
+                    fingerprint: fingerprint_for_cache.clone(),
+                    run_id: run_id_for_cache.clone(),
+                    exit_code: code,
+                    output: redacted_output.clone(),
+                    cached_at: Utc::now(),
+                    changed_files: changed,
+                },
+            );
 
-                    scheduler.release(&run_id_for_cache);
-                    active_by_id.remove(&run_id_for_cache);
-                    active_by_fp.remove(&fingerprint_for_cache);
-                    break;
+            // Persist to DB
+            if let Some(db) = db_for_completion.as_ref() {
+                let cache_key = fingerprint_for_cache.cache_key();
+                let now_iso = Utc::now().to_rfc3339();
+                if let Err(e) = db
+                    .insert_cache_entry(
+                        &uuid::Uuid::new_v4().to_string(),
+                        &cache_key,
+                        &run_id_for_cache,
+                        code,
+                        None,
+                        &now_iso,
+                        None,
+                    )
+                    .await
+                {
+                    tracing::warn!("Failed to persist cache entry to DB: {e}");
                 }
-                tokio::time::sleep(Duration::from_millis(200)).await;
             }
+
+            if let Some(active) = active_by_fp.get(&fingerprint_for_cache) {
+                let mut run = active.value().lock();
+                // Store completion result so late joiners can still discover
+                // this run even after it finishes (fixes the classic race
+                // where the completion hook removes the entry before a
+                // concurrent agent checks active_by_fingerprint).
+                run.completion = Some((code, redacted_output.clone()));
+                for tx in run.subscribers.drain(..) {
+                    if let Err(e) = tx.send(code) {
+                        warn!(
+                            "Failed to notify subscriber for run {}: {}",
+                            run_id_for_cache, e
+                        );
+                    }
+                }
+            }
+
+            scheduler.release(&run_id_for_cache);
+            active_by_id.remove(&run_id_for_cache);
+
+            // Remove from active_by_fingerprint after a short grace period
+            // so late-arriving agents can still discover and join this run.
+            let fp_clone = fingerprint_for_cache.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                active_by_fp.remove(&fp_clone);
+            });
         });
 
         Ok(RunOutcome::Started {
@@ -626,6 +810,177 @@ impl RunManager {
             queue_time_ms: None,
             reason: Some("new run started — no matching run found".into()),
         })
+    }
+
+    /// Join an existing active run (subscribe to its completion).
+    /// Handles both still-running and already-completed runs via the
+    /// `completion` field on `ActiveRun`.
+    async fn join_existing(&self, active: Arc<ParkingMutex<ActiveRun>>) -> Result<RunOutcome> {
+        self.duplicates_prevented
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let rx_opt: Option<watch::Receiver<i32>>;
+        {
+            let mut run = active.lock();
+            if let Some((_code, _output)) = &run.completion {
+                let run_id = run.spec.run_id.clone();
+                return Ok(RunOutcome::Joined {
+                    run_id,
+                    reason: Some(
+                        "exact fingerprint match — joining completed equivalent run".into(),
+                    ),
+                });
+            }
+            // Not completed yet — subscribe for the exit code.
+            let (tx, rx) = watch::channel(-1);
+            run.subscribers.push(tx);
+            rx_opt = Some(rx);
+        }
+
+        if let Some(mut rx) = rx_opt {
+            let _ = rx.wait_for(|c| *c >= 0).await.map(|r| *r).unwrap_or(-1);
+        }
+        let run_id = { active.lock().spec.run_id.clone() };
+        Ok(RunOutcome::Joined {
+            run_id,
+            reason: Some("exact fingerprint match — joining existing equivalent run".into()),
+        })
+    }
+
+    /// Start a new run, or join an existing one if a concurrent agent already
+    /// reserved the same fingerprint. Uses `DashMap::entry` for an atomic
+    /// check-and-insert, closing the classic TOCTOU race between
+    /// `run_or_join`'s step-4 check and `start_new`'s insertion.
+    ///
+    /// Accepts a precomputed `fingerprint` to avoid re-running expensive
+    /// git operations (which can deadlock when two agents compete inside
+    /// `tokio::join!` for the same git subprocesses).
+    async fn start_or_reserve(
+        &self,
+        spec: RunSpec,
+        fingerprint: CommandFingerprint,
+    ) -> Result<RunOutcome> {
+        let run_id = spec.run_id.clone();
+
+        // Atomically check-and-reserve the fingerprint.
+        match self.active_by_fingerprint.entry(fingerprint.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                // Another agent beat us here — join their run.
+                // Clone the Arc and drop the entry (which holds the shard
+                // write-lock) before the first .await to avoid deadlocking
+                // with the completion hook which needs the same shard lock.
+                let existing = entry.get().clone();
+                drop(entry);
+                self.join_existing(existing).await
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let active = Arc::new(ParkingMutex::new(ActiveRun {
+                    spec: spec.clone(),
+                    started_at: Instant::now(),
+                    subscribers: Vec::new(),
+                    is_dev_server: self.is_dev_server(&spec),
+                    completion: None,
+                }));
+                entry.insert(active.clone());
+                self.active_by_id.insert(run_id.clone(), active);
+
+                let repo_for_cache = spec.repo.clone();
+                let actual_run_id = self.supervisor.spawn(spec).await?;
+
+                // Spawn completion hook to cache results
+                let cache = self.cache.clone();
+                let db_for_completion = self.db.clone();
+                let active_by_fp = self.active_by_fingerprint.clone();
+                let active_by_id = self.active_by_id.clone();
+                let scheduler = self.scheduler.clone();
+                let supervisor = self.supervisor.clone();
+                let fingerprint_for_cache = fingerprint.clone();
+                let run_id_for_cache = actual_run_id.clone();
+
+                tokio::spawn(async move {
+                    let code = supervisor
+                        .wait_for_completion(&run_id_for_cache)
+                        .await
+                        .unwrap_or(-1);
+
+                    let output = supervisor.get_output(&run_id_for_cache).unwrap_or_default();
+                    let redacted_output = richter_core::redact::redact(&output);
+
+                    let repo_path = repo_for_cache.clone();
+                    let changed: Vec<String> = tokio::task::spawn_blocking(move || {
+                        std::process::Command::new("git")
+                            .args(["diff", "--name-only", "HEAD"])
+                            .current_dir(&repo_path)
+                            .output()
+                            .ok()
+                            .and_then(|o| String::from_utf8(o.stdout).ok())
+                            .map(|s| s.lines().map(String::from).collect())
+                            .unwrap_or_default()
+                    })
+                    .await
+                    .unwrap_or_default();
+
+                    cache.lock().put(
+                        fingerprint_for_cache.clone(),
+                        CachedResult {
+                            fingerprint: fingerprint_for_cache.clone(),
+                            run_id: run_id_for_cache.clone(),
+                            exit_code: code,
+                            output: redacted_output.clone(),
+                            cached_at: Utc::now(),
+                            changed_files: changed,
+                        },
+                    );
+
+                    if let Some(db) = db_for_completion.as_ref() {
+                        let cache_key = fingerprint_for_cache.cache_key();
+                        let now_iso = Utc::now().to_rfc3339();
+                        if let Err(e) = db
+                            .insert_cache_entry(
+                                &uuid::Uuid::new_v4().to_string(),
+                                &cache_key,
+                                &run_id_for_cache,
+                                code,
+                                None,
+                                &now_iso,
+                                None,
+                            )
+                            .await
+                        {
+                            tracing::warn!("Failed to persist cache entry to DB: {e}");
+                        }
+                    }
+
+                    if let Some(active) = active_by_fp.get(&fingerprint_for_cache) {
+                        let mut run = active.value().lock();
+                        run.completion = Some((code, redacted_output.clone()));
+                        for tx in run.subscribers.drain(..) {
+                            if let Err(e) = tx.send(code) {
+                                warn!(
+                                    "Failed to notify subscriber for run {}: {}",
+                                    run_id_for_cache, e
+                                );
+                            }
+                        }
+                    }
+
+                    scheduler.release(&run_id_for_cache);
+                    active_by_id.remove(&run_id_for_cache);
+
+                    let fp_clone = fingerprint_for_cache.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                        active_by_fp.remove(&fp_clone);
+                    });
+                });
+
+                Ok(RunOutcome::Started {
+                    run_id: actual_run_id,
+                    queue_time_ms: None,
+                    reason: Some("new run started — no matching run found".into()),
+                })
+            }
+        }
     }
 
     fn find_superset(
@@ -645,7 +1000,8 @@ impl RunManager {
         let lower = command.to_lowercase();
         if lower.contains("rm -rf") {
             Some(format!("would recursively delete: {}", command))
-        } else if lower.contains("git push") && (lower.contains("-f") || lower.contains("--force")) {
+        } else if lower.contains("git push") && (lower.contains("-f") || lower.contains("--force"))
+        {
             Some("would force-push, overwriting remote history".into())
         } else if lower.contains("drop ") || lower.contains("truncate ") {
             Some("would drop/truncate database table(s)".into())
@@ -676,7 +1032,7 @@ impl RunManager {
 
     fn is_dev_server(&self, spec: &RunSpec) -> bool {
         let lower = spec.command.to_lowercase();
-        spec.classification == "dev_server"
+        spec.classification == CommandClass::DevServer
             || lower.contains("next dev")
             || lower.contains("vite")
             || lower.contains("npm run dev")
@@ -689,14 +1045,24 @@ impl RunManager {
             || lower.contains("ng serve")
     }
 
+    /// Increment cache hits counter, resetting at midnight UTC.
+    fn increment_cache_hits(&self) {
+        let today = Utc::now().date_naive();
+        {
+            let mut date = self.cache_hits_date.lock();
+            if *date != today {
+                *date = today;
+                self.cache_hits_today
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        self.cache_hits_today
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn classify_resource(&self, spec: &RunSpec) -> ResourceClass {
-        match spec.resource_class.as_str() {
-            "heavy_build" => ResourceClass::HeavyBuild,
-            "heavy_test" => ResourceClass::HeavyTest,
-            "light_lint" => ResourceClass::LightLint,
-            "install" => ResourceClass::Install,
-            "dev_server" => ResourceClass::DevServer,
-            _ => {
+        match spec.resource_class {
+            ResourceClass::Unknown => {
                 let lower = spec.command.to_lowercase();
                 if lower.contains("test") || lower.contains("pytest") {
                     ResourceClass::HeavyTest
@@ -719,53 +1085,54 @@ impl RunManager {
                     ResourceClass::LightLint
                 }
             }
+            other => other,
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_fingerprint_deterministic() {
+    #[tokio::test]
+    async fn test_fingerprint_deterministic() {
         let spec = RunSpec {
             command: "cargo build".into(),
             repo: "/test".into(),
             ..Default::default()
         };
-        let fp1 = CommandFingerprint::from_spec(&spec);
-        let fp2 = CommandFingerprint::from_spec(&spec);
-        assert_eq!(fp1.command_hash, fp2.command_hash);
+        let fp1 = CommandFingerprint::from_spec(&spec).await;
+        let fp2 = CommandFingerprint::from_spec(&spec).await;
+        assert_eq!(fp1.hash, fp2.hash);
         assert_eq!(fp1, fp2);
     }
 
-    #[test]
-    fn test_fingerprint_subset() {
+    #[tokio::test]
+    async fn test_fingerprint_subset() {
         let a = CommandFingerprint::from_spec(&RunSpec {
             command: "cargo build".into(),
             repo: "/x".into(),
             ..Default::default()
-        });
+        })
+        .await;
         let b = CommandFingerprint::from_spec(&RunSpec {
             command: "cargo build".into(),
             repo: "/x".into(),
             ..Default::default()
-        });
+        })
+        .await;
         assert!(a.is_subset_of(&b));
         assert!(a.is_superset_of(&b));
     }
 
-    #[test]
-    fn test_destructive_detection() {
+    #[tokio::test]
+    async fn test_destructive_detection() {
         let bus = EventBus::new();
-        let scheduler = Arc::new(Scheduler::new(
+        let scheduler = Scheduler::new(
             crate::scheduler::SchedulerConfig::default(),
             bus.clone(),
             crate::scheduler::ResourceMonitor::new(),
-        ));
+        );
         let supervisor = Arc::new(ProcessSupervisor::new(bus));
         let rm = RunManager::new(scheduler, supervisor, None, EventBus::new());
 
@@ -774,14 +1141,14 @@ mod tests {
         assert!(!rm.is_destructive("cargo build"));
     }
 
-    #[test]
-    fn test_dev_server_detection() {
+    #[tokio::test]
+    async fn test_dev_server_detection() {
         let bus = EventBus::new();
-        let scheduler = Arc::new(Scheduler::new(
+        let scheduler = Scheduler::new(
             crate::scheduler::SchedulerConfig::default(),
             bus.clone(),
             crate::scheduler::ResourceMonitor::new(),
-        ));
+        );
         let supervisor = Arc::new(ProcessSupervisor::new(bus));
         let rm = RunManager::new(scheduler, supervisor, None, EventBus::new());
 
@@ -799,9 +1166,61 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn test_cached_result_freshness() {
-        let fp = CommandFingerprint::from_spec(&RunSpec::default());
+    #[tokio::test]
+    async fn test_cache_result_stores_and_evicts() {
+        let bus = EventBus::new();
+        let scheduler = Scheduler::new(
+            crate::scheduler::SchedulerConfig::default(),
+            bus.clone(),
+            crate::scheduler::ResourceMonitor::new(),
+        );
+        let supervisor = Arc::new(ProcessSupervisor::new(bus));
+        let rm = RunManager::new(scheduler, supervisor, None, EventBus::new());
+
+        // Insert 3 entries (capacity is 10_000, so none evicted yet)
+        for i in 0..3 {
+            let fp = CommandFingerprint::from_spec(&RunSpec {
+                command: format!("echo {}", i),
+                ..Default::default()
+            })
+            .await;
+            let result = CachedResult {
+                fingerprint: fp.clone(),
+                run_id: format!("r{}", i),
+                exit_code: 0,
+                output: String::new(),
+                cached_at: Utc::now(),
+                changed_files: vec![],
+            };
+            rm.cache_result(fp, result);
+        }
+
+        // Verify all 3 are present
+        {
+            let fp = CommandFingerprint::from_spec(&RunSpec {
+                command: "echo 0".into(),
+                ..Default::default()
+            })
+            .await;
+            assert!(rm.cache.lock().get(&fp).is_some());
+        }
+
+        // Verify invalidate_cache removes a specific entry
+        let fp0 = CommandFingerprint::from_spec(&RunSpec {
+            command: "echo 0".into(),
+            ..Default::default()
+        })
+        .await;
+        rm.invalidate_cache(&fp0);
+        {
+            let cache = rm.cache.lock();
+            assert_eq!(cache.len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cached_result_freshness() {
+        let fp = CommandFingerprint::from_spec(&RunSpec::default()).await;
         let result = CachedResult {
             fingerprint: fp,
             run_id: "r1".into(),
@@ -810,7 +1229,7 @@ mod tests {
             cached_at: Utc::now(),
             changed_files: vec![],
         };
-        assert!(result.is_fresh(Duration::from_secs(600)));
-        assert!(result.is_fresh(Duration::from_secs(1)));
+        assert!(result.is_fresh_blocking(Duration::from_secs(600)));
+        assert!(result.is_fresh_blocking(Duration::from_secs(1)));
     }
 }

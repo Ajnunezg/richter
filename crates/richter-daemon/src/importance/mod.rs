@@ -6,14 +6,18 @@
 //!
 //! Notification policy: coalesce, rate-limit, only high/crit in notifications.
 
+pub mod llm;
 pub mod parsers;
 pub mod pipeline;
 
+pub use llm::HTTPModelBoost;
 pub use parsers::{
     detect_parser_from_command, BazelParser, CargoParser, EslintParser, GoTestParser, JunitParser,
     OutputParser, ParseResult, PytestParser, TapParser, TscParser, TurboNxParser, XcodebuildParser,
 };
-pub use pipeline::{ImportanceConfig, ImportanceEngine};
+pub use pipeline::{
+    ImportanceConfig, ImportanceEngine, ModelBoostProvider, NoopModelBoost, ShellModelBoost,
+};
 
 /// Importance severity level.
 #[derive(

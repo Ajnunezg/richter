@@ -30,12 +30,7 @@ impl DaemonApiClient {
     }
 
     /// Send an HTTP request to the daemon and return the JSON response body.
-    fn send_request(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<JsonValue>,
-    ) -> Result<JsonValue> {
+    fn send_request(&self, method: &str, path: &str, body: Option<JsonValue>) -> Result<JsonValue> {
         #[cfg(not(unix))]
         {
             anyhow::bail!("Unix socket transport is not available on this platform");
@@ -45,9 +40,7 @@ impl DaemonApiClient {
         {
             let mut stream = UnixStream::connect(&self.socket_path)
                 .with_context(|| format!("Failed to connect to daemon at {}", self.socket_path))?;
-            stream
-                .set_read_timeout(Some(self.read_timeout))
-                .ok();
+            stream.set_read_timeout(Some(self.read_timeout)).ok();
 
             let token = self.auth_token.as_deref().unwrap_or("");
 
@@ -87,8 +80,7 @@ impl DaemonApiClient {
                 &buf
             };
 
-            serde_json::from_slice(body_bytes)
-                .context("Failed to parse daemon response as JSON")
+            serde_json::from_slice(body_bytes).context("Failed to parse daemon response as JSON")
         }
     }
 

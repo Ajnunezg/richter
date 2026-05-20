@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 BIN="target/release"
+
+cleanup() {
+    if [ -n "$DAEMON_PID" ]; then
+        kill "$DAEMON_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
 echo "╔══════════════════════════════════════════════╗"
 echo "║     Richter Mobile — End-to-End Smoke Test   ║"
 echo "╚══════════════════════════════════════════════╝"
@@ -47,6 +55,5 @@ echo ""
 echo "━━━ 7. CLI mobile status ━━━"
 "$BIN/richter" mobile status
 
-kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null
 echo ""
 echo "✅ E2E mobile smoke test complete"

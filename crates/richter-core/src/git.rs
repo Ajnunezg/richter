@@ -507,7 +507,7 @@ mod tests {
         let canon_dir = std::fs::canonicalize(&dir).unwrap();
         assert!(wt_paths
             .iter()
-            .any(|p| { std::fs::canonicalize(p).map_or(false, |cp| cp == canon_dir) }));
+            .any(|p| { std::fs::canonicalize(p).is_ok_and(|cp| cp == canon_dir) }));
     }
 
     #[test]

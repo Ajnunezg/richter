@@ -115,8 +115,16 @@ secrets. Users should:
 
 ## Keychain Storage
 
-All provider API keys (OpenAI, Anthropic, DeepSeek, etc.) are stored in the
-macOS Keychain:
+> **⚠️ Not yet implemented.** Keychain storage for provider API keys is planned
+> but not yet implemented. Currently, API keys entered in the Swift app's
+> Settings view are held in the `@State` property `modelAPIKey` on
+> `RichterSettings` — they live only in the Swift app's process memory and are
+> **never persisted to disk**. Closing the app clears the key. The daemon
+> receives the key over the Unix socket when needed and holds it in memory only
+> for the duration of the API call.
+
+All provider API keys (OpenAI, Anthropic, DeepSeek, etc.) are intended to be
+stored in the macOS Keychain:
 
 ```
 Service: com.richter.openai-api-key
@@ -128,7 +136,8 @@ Account: default
 Access Group: $(TeamIdentifier).com.richter
 ```
 
-The Richter SwiftUI app manages Keychain entries via the Security framework:
+Once implemented, the Richter SwiftUI app will manage Keychain entries via the
+Security framework:
 
 ```swift
 SecItemAdd(...)
@@ -150,10 +159,10 @@ the API call and then dropped.
 
 ### Keychain Access
 
-The Keychain item is created with the access control setting that requires
-the Richter app's bundle ID for access. If the daemon is running as a
-separate process, it receives the key over the authenticated Unix socket,
-not via direct Keychain access.
+When implemented, the Keychain item will be created with an access control
+setting that requires the Richter app's bundle ID for access. If the daemon is
+running as a separate process, it receives the key over the authenticated Unix
+socket, not via direct Keychain access.
 
 ## Unix Domain Socket Auth
 
@@ -268,7 +277,7 @@ by hash from the audit table.
 | Agent conflicts on shared files | Advisory path leases |
 | Flood of unimportant events | Importance pipeline + notification policy |
 | Unauthorized access to the local API | Unix socket permissions + auth token |
-| API key theft from config files | Keychain storage, never in config files |
+| API key theft from config files | Keys held in app memory only (Keychain storage planned but not yet implemented) |
 
 ### What Richter Does NOT Protect Against
 

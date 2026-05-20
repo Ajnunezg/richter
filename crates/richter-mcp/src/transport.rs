@@ -75,9 +75,9 @@ pub trait Transport: Send + Sync + 'static {
 /// disconnections or parse errors.
 pub struct StdioTransport {
     /// Channel sender for outgoing JSON-RPC messages to be written to stdout.
-    tx: mpsc::UnboundedSender<JsonRpcEnvelope>,
+    tx: mpsc::Sender<JsonRpcEnvelope>,
     /// Channel receiver for incoming JSON-RPC messages read from stdin.
-    rx: mpsc::UnboundedReceiver<JsonRpcEnvelope>,
+    rx: mpsc::Receiver<JsonRpcEnvelope>,
     /// Join handle for the stdin reader task.
     stdin_handle: Option<tokio::task::JoinHandle<()>>,
     /// Join handle for the stdout writer task.
@@ -97,8 +97,8 @@ impl StdioTransport {
     ///
     /// Returns an error if stdin cannot be opened.
     pub fn new() -> Result<Self> {
-        let (incoming_tx, incoming_rx) = mpsc::unbounded_channel::<JsonRpcEnvelope>();
-        let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<JsonRpcEnvelope>();
+        let (incoming_tx, incoming_rx) = mpsc::channel::<JsonRpcEnvelope>(1024);
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<JsonRpcEnvelope>(1024);
 
         // Spawn stdin reader on a blocking thread.
         let incoming = incoming_tx;
@@ -122,7 +122,7 @@ impl StdioTransport {
                         match serde_json::from_str::<JsonRpcEnvelope>(&trimmed) {
                             Ok(envelope) => {
                                 debug!(method = ?envelope.method, id = ?envelope.id, "recv JSON-RPC");
-                                if incoming.send(envelope).is_err() {
+                                if incoming.blocking_send(envelope).is_err() {
                                     break;
                                 }
                             }
@@ -143,8 +143,7 @@ impl StdioTransport {
         // Spawn stdout writer on a blocking thread.
         let stdout_handle = tokio::task::spawn_blocking(move || {
             let mut stdout = std::io::stdout();
-            let mut rx = outgoing_rx;
-            while let Some(message) = rx.blocking_recv() {
+            while let Some(message) = outgoing_rx.blocking_recv() {
                 match serde_json::to_string(&message) {
                     Ok(line) => {
                         // Write one line of JSON-RPC to stdout.
@@ -185,7 +184,8 @@ impl Transport for StdioTransport {
     async fn send(&mut self, message: &JsonRpcEnvelope) -> Result<()> {
         self.tx
             .send(message.clone())
-            .context("failed to send JSON-RPC message on stdout channel")?;
+            .await
+            .context("failed to send JSON-RPC message on stdout channel — backpressure")?;
         Ok(())
     }
 
@@ -225,9 +225,9 @@ pub struct HttpTransport {
     /// Channel sender for pushing events to connected SSE clients.
     tx: tokio::sync::broadcast::Sender<Arc<String>>,
     /// Incoming message receiver (populated by axum handler).
-    rx: mpsc::UnboundedReceiver<JsonRpcEnvelope>,
+    rx: mpsc::Receiver<JsonRpcEnvelope>,
     /// Incoming message sender half (given to axum handler).
-    incoming_tx: mpsc::UnboundedSender<JsonRpcEnvelope>,
+    incoming_tx: mpsc::Sender<JsonRpcEnvelope>,
 }
 
 impl HttpTransport {
@@ -237,7 +237,7 @@ impl HttpTransport {
     /// and passed to axum SSE handlers.
     pub fn new() -> (Self, tokio::sync::broadcast::Sender<Arc<String>>) {
         let (event_tx, _) = tokio::sync::broadcast::channel::<Arc<String>>(256);
-        let (incoming_tx, incoming_rx) = mpsc::unbounded_channel::<JsonRpcEnvelope>();
+        let (incoming_tx, incoming_rx) = mpsc::channel::<JsonRpcEnvelope>(1024);
 
         let transport = Self {
             tx: event_tx.clone(),
@@ -249,7 +249,7 @@ impl HttpTransport {
     }
 
     /// Get a clone of the incoming message sender for axum handlers.
-    pub fn incoming_sender(&self) -> mpsc::UnboundedSender<JsonRpcEnvelope> {
+    pub fn incoming_sender(&self) -> mpsc::Sender<JsonRpcEnvelope> {
         self.incoming_tx.clone()
     }
 }
@@ -287,8 +287,8 @@ impl Transport for HttpTransport {
 /// stdio or network when the MCP server is co-located inside the daemon
 /// process.
 pub struct InProcessTransport {
-    tx: mpsc::UnboundedSender<JsonRpcEnvelope>,
-    rx: mpsc::UnboundedReceiver<JsonRpcEnvelope>,
+    tx: mpsc::Sender<JsonRpcEnvelope>,
+    rx: mpsc::Receiver<JsonRpcEnvelope>,
 }
 
 impl InProcessTransport {
@@ -298,8 +298,8 @@ impl InProcessTransport {
     /// - The `InProcessTransport` that the MCP server uses.
     /// - An `InProcessPeer` that the daemon's internal handler uses.
     pub fn paired() -> (Self, InProcessPeer) {
-        let (server_tx, peer_rx) = mpsc::unbounded_channel::<JsonRpcEnvelope>();
-        let (peer_tx, server_rx) = mpsc::unbounded_channel::<JsonRpcEnvelope>();
+        let (server_tx, peer_rx) = mpsc::channel::<JsonRpcEnvelope>(1024);
+        let (peer_tx, server_rx) = mpsc::channel::<JsonRpcEnvelope>(1024);
 
         let transport = Self {
             tx: server_tx,
@@ -326,7 +326,8 @@ impl Transport for InProcessTransport {
     async fn send(&mut self, message: &JsonRpcEnvelope) -> Result<()> {
         self.tx
             .send(message.clone())
-            .context("failed to send message on in-process channel")?;
+            .await
+            .context("failed to send message on in-process channel — backpressure")?;
         Ok(())
     }
 }
@@ -336,8 +337,8 @@ impl Transport for InProcessTransport {
 /// Used by the daemon's internal handler to communicate with the
 /// co-located MCP server.
 pub struct InProcessPeer {
-    tx: mpsc::UnboundedSender<JsonRpcEnvelope>,
-    rx: mpsc::UnboundedReceiver<JsonRpcEnvelope>,
+    tx: mpsc::Sender<JsonRpcEnvelope>,
+    rx: mpsc::Receiver<JsonRpcEnvelope>,
 }
 
 impl InProcessPeer {
@@ -347,10 +348,12 @@ impl InProcessPeer {
     }
 
     /// Send a message to the MCP server.
-    pub fn send(&self, msg: JsonRpcEnvelope) -> Result<()> {
+    /// Returns error if the channel is full (backpressure).
+    pub async fn send(&self, msg: JsonRpcEnvelope) -> Result<()> {
         self.tx
             .send(msg)
-            .context("failed to send message to MCP server")?;
+            .await
+            .context("failed to send message to MCP server — backpressure")?;
         Ok(())
     }
 }
@@ -472,13 +475,16 @@ mod tests {
             Some(serde_json::Value::Number(1.into())),
             serde_json::json!({"ping": "pong"}),
         );
-        peer.send(request.clone()).unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let received = rt.block_on(async { transport.recv().await.unwrap() });
-        assert!(received.is_some());
-        let msg = received.unwrap();
-        assert_eq!(msg.id, request.id);
-        assert_eq!(msg.result, request.result);
+        rt.block_on(async {
+            peer.send(request.clone()).await.unwrap();
+
+            let received = transport.recv().await.unwrap();
+            assert!(received.is_some());
+            let msg = received.unwrap();
+            assert_eq!(msg.id, request.id);
+            assert_eq!(msg.result, request.result);
+        });
     }
 }

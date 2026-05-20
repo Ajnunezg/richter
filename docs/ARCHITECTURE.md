@@ -51,7 +51,7 @@ The system consists of four main components and three integration surfaces:
 │         └──────────────────────────────────────────────┘  │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐ │
-│  │  macOS Keychain (provider API keys)                  │ │
+│  │  macOS Keychain (provider API keys — planned)       │ │
 │  └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -59,7 +59,8 @@ The system consists of four main components and three integration surfaces:
 - **Richter App** — SwiftUI macOS menu-bar app plus full-window dashboard. The primary
   user-facing surface. Communicates with the daemon exclusively via the local Unix domain
   socket API. Displays active runs, queued runs, important events, repo/worktree state,
-  agent status, and system pressure. Stores provider API keys in the macOS Keychain.
+  agent status, and system pressure. Provider API keys are stored in app memory only
+  (Keychain storage planned); the daemon receives keys via the local API when needed.
   Never calls external model APIs directly — all model calls are mediated by the daemon.
 
 - **Richter Daemon** (`richterd`) — A user-scoped background service (SMAppService
@@ -309,10 +310,11 @@ plugin_manifests
 
 ### Migrations
 
-Migrations are applied sequentially at daemon startup. Each migration is a numbered
-SQL file in `crates/richter-daemon/migrations/`. The `schema_version` pragma or a
-dedicated `_migrations` table tracks applied migrations. Migrations are
-forward-only; rollback is handled by the user deleting the database and restarting.
+Migrations are applied sequentially at daemon startup. Each migration is an inline
+Rust function defined in `crates/richter-core/src/db.rs`, dispatched by a
+`migration(version)` match statement (e.g., `1 => migration_v1`, `2 => migration_v2`).
+The `_schema_version` table tracks the current version. Migrations are forward-only;
+rollback is handled by the user deleting the database and restarting.
 
 ### Retention
 

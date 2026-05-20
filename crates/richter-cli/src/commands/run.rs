@@ -74,8 +74,6 @@ struct RunResponse {
     pub queue_time_ms: Option<u64>,
 }
 
-
-
 /// Runs the core command execution flow.
 pub async fn run(args: RunArgs, socket: &str) -> anyhow::Result<()> {
     let command_str = args.command.join(" ");
@@ -119,7 +117,10 @@ pub async fn run(args: RunArgs, socket: &str) -> anyhow::Result<()> {
         "Cached" => {
             let reason = resp.reason.as_deref().unwrap_or("cache hit");
             let age = resp.cache_age.as_deref().unwrap_or("?");
-            println!("Richter: cache hit for run {} — {} (age: {})", resp.run_id, reason, age);
+            println!(
+                "Richter: cache hit for run {} — {} (age: {})",
+                resp.run_id, reason, age
+            );
             if let Some(ref output) = resp.output {
                 if !output.is_empty() {
                     print!("{}", output);
@@ -131,7 +132,10 @@ pub async fn run(args: RunArgs, socket: &str) -> anyhow::Result<()> {
         "Queued" => {
             let reason = resp.reason.as_deref().unwrap_or("resource constrained");
             let wait = resp.estimated_wait_ms.unwrap_or(0);
-            println!("Richter: run {} queued — {} (est. {}ms)", resp.run_id, reason, wait);
+            println!(
+                "Richter: run {} queued — {} (est. {}ms)",
+                resp.run_id, reason, wait
+            );
         }
         "Started" => {
             let reason = resp.reason.as_deref().unwrap_or("new run started");
