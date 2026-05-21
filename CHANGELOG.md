@@ -5,9 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Added
+- **Security**: `SecretStringConfig` type — API keys for model providers are now redacted in Debug and never serialized to config files.
+- **Architecture**: `HTTPModelBoost::from_config()` enables file-driven model provider setup (alternative to raw env vars).
+- **Architecture**: `ErrorCode` enum with 11 machine-readable variants for programmatic API error handling.
+- **Architecture**: `DaemonError` extended with `Fingerprint`, `CachePoisoned`, `SchedulerUnavailable`, `SpawnFailed`, and `InvalidCommand` variants.
+- **CLI**: Typed HTTP client with `httparse` validation — status code checking, Content-Length verification, chunked-transfer support, and header-injection guards.
+- **CLI**: `LocalClient::get()` and `LocalClient::post()` type-safe methods.
+- **CI/CD**: Release workflow now creates a `richter-darwin-arm64.tar.gz` artifact and uploads it as a GitHub Actions artifact before creating the release.
+
+### Fixed
+- Security: Mobile gateway `approve_handler` / `deny_handler` now records the authenticated `DeviceId` in the audit trail instead of hardcoding `"daemon"`.
+- Security: API error responses include structured `{"code": "...", "error": "...", "status": N}` instead of opaque strings.
+- Security: CLI raw HTTP/1.1 string building replaced with byte-based `httparse` response handling.
+
+### Changed
+- `ImportanceConfig` now accepts `model_providers: Vec<ModelProviderConfig>` and `fallback_to_env: bool` for hybrid env/config discovery.
+
 ## [Unreleased]
 
 ### Added
+- **Reliability**: Daemon health watchdog — periodic DB liveness check every 60s (configurable via `RICHTER_WATCHDOG_INTERVAL_SECS`).
+- **Performance**: Fingerprint result caching — 5-second TTL cache avoids redundant git process spawns during multi-agent bursts (256 entry max).
+- **Security**: Per-client rate limiting — rate limiter distinguishes between mobile devices (`X-Device-ID`) and MCP agents (`X-Agent-ID`) instead of a single static bucket.
+- **Operations**: `docs/RUNBOOK.md` — comprehensive operational runbook covering daemon lifecycle, troubleshooting, monitoring, and data retention.
+- **Security**: `docs/THREAT_MODEL.md` — STRIDE-based threat model for the daemon, CLI, MCP server, and mobile gateway.
+- **Testing**: `tests/daemon_e2e.rs` — end-to-end integration tests for daemon startup, health checks, PID file double-start prevention, and cleanup.
+
+### Changed
+- **Security**: Database encryption status honestly reports `"key-managed (vfs-pending)"` instead of falsely claiming `"aes-256-gcm"`. Crypto primitives are ready but SQLite file is not encrypted at rest.
+- **Architecture**: `db.rs` (1,700 LOC) decomposed into `db/mod.rs`, `db/rows.rs`, and `db/migrations.rs`.
+- **Reliability**: `ErrorCode` enum derives `PartialEq` for test assertions.
+- **Reliability**: Daemon logs encryption check as `warn` instead of `error` (non-fatal).
+- **Style**: Workspace-wide `cargo fmt` pass.
+
+### Added (prior)
 - Strong ID types: all ID types (`RepoId`, `RunId`, `EventId`, etc.) are now newtype wrappers around `Uuid`, preventing accidental cross-type usage.
 - Request timeout middleware on API (30s default).
 - Request ID (`X-Request-Id`) propagation via tracing spans.

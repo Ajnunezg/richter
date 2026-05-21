@@ -7,7 +7,41 @@ use uuid::Uuid;
 use crate::api::AppState;
 use crate::error::{DaemonError, DaemonResult};
 
+/// Default client identifier used when no agent or device header is present.
+const DEFAULT_CLIENT_ID: &str = "default";
+
+/// Extract a per-client identifier from the request for rate limiting.
+///
+/// Checks for:
+/// 1. `X-Device-ID` header (mobile devices)
+/// 2. `X-Agent-ID` header (MCP agents)
+/// 3. Falls back to `DEFAULT_CLIENT_ID` (CLI / local consumers)
+fn client_id_from_request(request: &Request<Body>) -> String {
+    let headers = request.headers();
+
+    if let Some(device_id) = headers
+        .get("X-Device-ID")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return format!("device:{device_id}");
+    }
+
+    if let Some(agent_id) = headers
+        .get("X-Agent-ID")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return format!("agent:{agent_id}");
+    }
+
+    DEFAULT_CLIENT_ID.to_string()
+}
+
 /// Rate-limiting middleware. Health, metrics, onboard, and openapi endpoints are exempt.
+/// Uses per-client tracking: mobile devices and MCP agents are rate-limited independently.
 pub async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     request: Request<Body>,
@@ -29,8 +63,9 @@ pub async fn rate_limit_middleware(
         return Ok(next.run(request).await);
     }
 
-    // Use a static client ID for the Unix socket
-    if let Some(retry_after) = state.rate_limiter.check("unix-socket") {
+    // Per-client rate limiting based on agent/device identity
+    let client_id = client_id_from_request(&request);
+    if let Some(retry_after) = state.rate_limiter.check(&client_id) {
         let seconds = retry_after.ceil() as u32;
         state
             .metrics

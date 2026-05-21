@@ -15,37 +15,32 @@ jobs:
   build-macos:
     name: Build & Release (macOS)
     runs-on: macos-14
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-
-
+      - uses: Swatinem/rust-cache@v2
       - name: Build release binaries
-        run: |
-          cargo build --release -p richter-cli -p richter-daemon
-
+        run: cargo build --release -p richter-cli -p richter-daemon
       - name: Compute SHA256
         id: sha
         run: |
           shasum -a 256 target/release/richter > richter-darwin-arm64.sha256
           shasum -a 256 target/release/richterd >> richter-darwin-arm64.sha256
           cat richter-darwin-arm64.sha256
-
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-
+      - name: Create macOS tarball
+        run: |
+          tar czf richter-darwin-arm64.tar.gz -C target/release richter richterd
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: richter-darwin-arm64
+          path: |
+            richter-darwin-arm64.tar.gz
+            richter-darwin-arm64.sha256
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -54,8 +49,7 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
           files: |
-            target/release/richter
-            target/release/richterd
+            richter-darwin-arm64.tar.gz
             richter-darwin-arm64.sha256
           body: |
             ## Richter ${{ steps.version.outputs.VERSION }}
@@ -69,8 +63,6 @@ jobs:
 
             ### Verification
 
-            Verify downloads with the SHA256 checksums in `richter-darwin-arm64.sha256`:
-
             ```bash
             shasum -a 256 -c richter-darwin-arm64.sha256
             ```
@@ -78,7 +70,6 @@ jobs:
             ### Installation
 
             ```bash
-            # Extract and move to PATH
             tar xzf richter-darwin-arm64.tar.gz
             chmod +x richter richterd
             mv richter richterd /usr/local/bin/

@@ -109,8 +109,40 @@ impl HTTPModelBoost {
     /// Circuit breaker cooldown period.
     const CIRCUIT_BREAKER_COOLDOWN: Duration = Duration::from_secs(300); // 5 minutes
 
-    /// Build from environment variables. Returns `None` if no endpoint
-    /// is configured (meaning the feature is disabled).
+    /// Build from a typed [`ModelProviderConfig`] (recommended over raw env vars).
+    pub fn from_config(cfg: &richter_core::config::ModelProviderConfig) -> Option<Self> {
+        let endpoint = cfg.api_base.as_ref()?.clone();
+        if endpoint.is_empty() {
+            return None;
+        }
+        let api_key = if cfg.api_key.is_configured() {
+            Some(cfg.api_key.expose_secret().to_string())
+        } else {
+            None
+        };
+        let timeout_secs = cfg.timeout_secs;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        Some(Self {
+            endpoint,
+            api_key,
+            model: cfg.model.clone(),
+            max_tokens: cfg.max_tokens.map(|v| v as u32).unwrap_or(256),
+            client,
+            budget: None,
+            circuit_breaker: CircuitBreaker::new(
+                Self::CIRCUIT_BREAKER_MAX_FAILURES,
+                Self::CIRCUIT_BREAKER_COOLDOWN,
+            ),
+        })
+    }
+
+    /// Build from environment variables. Retained for backward compatibility;
+    /// config-file-driven setup is preferred.
     pub fn from_env() -> Option<Self> {
         let endpoint = std::env::var("RICHTER_LLM_ENDPOINT").ok()?;
         if endpoint.is_empty() {
@@ -126,7 +158,6 @@ impl HTTPModelBoost {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(256);
-
         let timeout_secs: u64 = std::env::var("RICHTER_LLM_TIMEOUT")
             .ok()
             .and_then(|v| v.parse().ok())

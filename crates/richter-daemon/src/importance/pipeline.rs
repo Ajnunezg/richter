@@ -149,6 +149,10 @@ pub struct ImportanceConfig {
     pub coalesce_window: Duration,
     /// Maximum notifications per minute.
     pub max_notifications_per_min: usize,
+    /// Model providers from config file (overrides env-based discovery).
+    pub model_providers: Vec<richter_core::config::ModelProviderConfig>,
+    /// Fallback to env-based discovery when config providers are empty.
+    pub fallback_to_env: bool,
 }
 
 impl Default for ImportanceConfig {
@@ -159,6 +163,8 @@ impl Default for ImportanceConfig {
             min_notify_severity: Severity::High,
             coalesce_window: Duration::from_secs(30),
             max_notifications_per_min: 3,
+            model_providers: Vec::new(),
+            fallback_to_env: true,
         }
     }
 }

@@ -236,8 +236,14 @@ async fn approvals_handler(
 async fn approve_handler(
     State(state): State<Arc<MobileGatewayState>>,
     axum::extract::Path(approval_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
 ) -> Json<serde_json::Value> {
-    let decided_by = String::from("daemon");
+    let device_id: String = req
+        .extensions()
+        .get::<super::auth::DeviceId>()
+        .map(|d| d.0.clone())
+        .unwrap_or_else(|| String::from("daemon"));
+    let decided_by = device_id.clone();
 
     // Update the approval entry (scoped lock)
     let result = {
@@ -309,8 +315,14 @@ async fn approve_handler(
 async fn deny_handler(
     State(state): State<Arc<MobileGatewayState>>,
     axum::extract::Path(approval_id): axum::extract::Path<String>,
+    req: axum::http::Request<axum::body::Body>,
 ) -> Json<serde_json::Value> {
-    let decided_by = String::from("daemon");
+    let device_id: String = req
+        .extensions()
+        .get::<super::auth::DeviceId>()
+        .map(|d| d.0.clone())
+        .unwrap_or_else(|| String::from("daemon"));
+    let decided_by = device_id.clone();
 
     // Update the approval entry (scoped lock)
     let result = {

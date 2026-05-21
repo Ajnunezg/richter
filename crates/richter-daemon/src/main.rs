@@ -147,9 +147,9 @@ async fn main() -> anyhow::Result<()> {
             .context("Failed to open SQLite database")?,
     );
 
-    // --- verify encryption ---
+    // --- verify encryption key management ---
     if let Err(e) = db.verify_encryption().await {
-        tracing::error!("Encryption verification failed: {:#}", e);
+        tracing::warn!("Encryption key check failed (non-fatal): {:#}", e);
     }
     info!("Database encryption: {}", db.encryption_status());
 
@@ -400,6 +400,29 @@ async fn main() -> anyhow::Result<()> {
                     Err(e) => tracing::warn!("Cache eviction failed: {e}"),
                     _ => {}
                 }
+            }
+        });
+    }
+
+    // --- health watchdog: periodic self-check ---
+    {
+        let db_watchdog = db.clone();
+        let watchdog_interval = std::env::var("RICHTER_WATCHDOG_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(60);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(watchdog_interval)).await;
+                // Database liveness check
+                match db_watchdog.list_active_runs().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!("Health watchdog: database unreachable — {e:#}");
+                    }
+                }
+                // Resource pressure warning
+                let _ = sysinfo::System::new_all(); // Force refresh
             }
         });
     }

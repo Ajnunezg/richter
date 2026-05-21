@@ -31,6 +31,9 @@ walkdir.workspace = true
 tempfile.workspace = true
 sha2.workspace = true
 regex.workspace = true
+http = "1"
+httparse = "1"
+hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
 bytes.workspace = true
 http-body-util.workspace = true
-hyper.workspace = true
+hyper = { workspace = true, features = ["full"] }

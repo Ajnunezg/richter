@@ -37,13 +37,91 @@ static TOOLCHAIN_CACHE: LazyLock<Mutex<Option<ToolchainCache>>> =
 /// TTL for toolchain version cache.
 const TOOLCHAIN_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Fingerprint result cache: avoids redundant git process spawns when the same
+/// command+cwd is fingerprinted within the cache TTL.
+struct FingerprintCache {
+    /// Map of (identity_hash + cwd) -> fingerprint string.
+    entries: std::collections::HashMap<String, (String, std::time::Instant)>,
+}
+
+static FP_CACHE: LazyLock<Mutex<FingerprintCache>> = LazyLock::new(|| {
+    Mutex::new(FingerprintCache {
+        entries: std::collections::HashMap::new(),
+    })
+});
+
+/// TTL for fingerprint cache entries (short — git state changes frequently).
+const FP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Maximum number of cached fingerprints before eviction.
+const FP_CACHE_MAX_ENTRIES: usize = 256;
+
+/// Build a cache key from identity hash + cwd.
+fn fp_cache_key(command: &ClassifiedCommand, cwd: &str) -> String {
+    use blake3::Hasher;
+    let mut h = Hasher::new();
+    h.update(command.class.to_string().as_bytes());
+    for arg in &command.canonical {
+        h.update(arg.as_bytes());
+    }
+    h.update(cwd.as_bytes());
+    hex::encode(h.finalize().as_bytes())[..16].to_string()
+}
+
+/// Look up a cached fingerprint. Returns None on miss or expired entry.
+fn fp_cache_get(key: &str) -> Option<String> {
+    let mut cache = FP_CACHE.lock().unwrap();
+    if let Some((fp, instant)) = cache.entries.get(key) {
+        if instant.elapsed() < FP_CACHE_TTL {
+            return Some(fp.clone());
+        }
+        cache.entries.remove(key);
+    }
+    None
+}
+
+/// Insert a fingerprint into the cache, evicting oldest entries if at capacity.
+fn fp_cache_put(key: String, fingerprint: String) {
+    let mut cache = FP_CACHE.lock().unwrap();
+    // Evict expired entries first
+    cache
+        .entries
+        .retain(|_, (_, instant)| instant.elapsed() < FP_CACHE_TTL);
+    // If still at capacity, evict oldest
+    if cache.entries.len() >= FP_CACHE_MAX_ENTRIES {
+        if let Some(oldest_key) = cache
+            .entries
+            .iter()
+            .min_by_key(|(_, (_, instant))| *instant)
+            .map(|(k, _)| k.clone())
+        {
+            cache.entries.remove(&oldest_key);
+        }
+    }
+    cache
+        .entries
+        .insert(key, (fingerprint, std::time::Instant::now()));
+}
+
 /// Compute a BLAKE3 256-bit fingerprint asynchronously.
+///
+/// Results are cached for 5 seconds to avoid redundant git process spawns
+/// when the same command+cwd is fingerprinted repeatedly (common during
+/// multi-agent bursts).
 pub async fn fingerprint(command: &ClassifiedCommand, cwd: &str) -> String {
+    let key = fp_cache_key(command, cwd);
+    if let Some(cached) = fp_cache_get(&key) {
+        return cached;
+    }
+
     let mut h = blake3::Hasher::new();
     hash_identity(&mut h, command);
     hash_cwd(&mut h, cwd);
     hash_git_state(&mut h, cwd).await;
-    hex::encode(h.finalize().as_bytes())
+    let result = hex::encode(h.finalize().as_bytes());
+
+    fp_cache_put(key, result.clone());
+    result
 }
 
 /// BLAKE3 256-bit fingerprint that excludes the working directory path.

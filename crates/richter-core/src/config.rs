@@ -208,6 +208,54 @@ impl Default for ResourceLimits {
 // Model provider config
 // ---------------------------------------------------------------------------
 
+/// Secret string that redacts its value in Debug/Serialize output.
+#[derive(Clone, Deserialize)]
+pub struct SecretStringConfig {
+    #[serde(default)]
+    value: String,
+}
+
+impl std::fmt::Debug for SecretStringConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.value.is_empty() {
+            write!(f, "SecretStringConfig(unset)")
+        } else {
+            write!(f, "SecretStringConfig([REDACTED])")
+        }
+    }
+}
+
+impl serde::Serialize for SecretStringConfig {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("[REDACTED]")
+    }
+}
+
+impl SecretStringConfig {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
+    pub fn expose_secret(&self) -> &str {
+        &self.value
+    }
+
+    pub fn is_configured(&self) -> bool {
+        !self.value.is_empty()
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for SecretStringConfig {
+    fn default() -> Self {
+        Self {
+            value: String::new(),
+        }
+    }
+}
+
 /// Configuration for an LLM model provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProviderConfig {
@@ -232,6 +280,27 @@ pub struct ModelProviderConfig {
 
     /// Maximum tokens per call.
     pub max_tokens: Option<u64>,
+
+    /// API key for the provider.
+    /// **Security**: redacted in Debug and never serialized.
+    #[serde(default)]
+    pub api_key: SecretStringConfig,
+
+    /// Timeout for model calls (seconds).
+    #[serde(default = "default_model_timeout")]
+    pub timeout_secs: u64,
+
+    /// Whether to use this provider for cheap-model boost.
+    #[serde(default)]
+    pub use_cheap: bool,
+
+    /// Whether to use this provider for frontier-model boost.
+    #[serde(default)]
+    pub use_frontier: bool,
+}
+
+fn default_model_timeout() -> u64 {
+    15
 }
 
 // ---------------------------------------------------------------------------

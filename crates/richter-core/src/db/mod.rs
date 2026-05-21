@@ -7,6 +7,12 @@
 //! The pool is internally `Arc`-wrapped so [`Database`] can be cloned cheaply and
 //! shared across tasks without an outer `Arc<Mutex>`.
 
+pub mod migrations;
+pub mod rows;
+
+// Re-export row types for backward compatibility.
+pub use rows::*;
+
 use crate::models::{CommandClass, EventKind, ResourceClass, RunStatus};
 use anyhow::Context;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -14,13 +20,7 @@ use sqlx::SqlitePool;
 use std::path::Path;
 use tracing;
 
-// ---------------------------------------------------------------------------
-// Schema version
-// ---------------------------------------------------------------------------
-
-/// Current schema version. Increment and add a migration in [`run_migrations`]
-/// whenever the schema changes.
-const CURRENT_SCHEMA_VERSION: u32 = 2;
+use migrations::CURRENT_SCHEMA_VERSION;
 
 // ---------------------------------------------------------------------------
 // Public database handle
@@ -118,19 +118,24 @@ impl Database {
             }
         }
 
-        run_migrations(&pool)
+        migrations::run_migrations(&pool)
             .await
             .context("failed to run database migrations")?;
 
-        // Initialize database encryption at rest.
+        // Initialize database encryption key management.
         // The key file lives alongside the database in the same directory.
+        //
+        // NOTE: The crypto module provides AES-256-GCM primitives and key
+        // management for future VFS-layer encryption (SQLCipher, encrypted
+        // filesystem, or custom VFS). The SQLite database file itself is NOT
+        // currently encrypted at rest. The key is generated and a health check
+        // is performed to ensure the crypto primitives are ready when a VFS
+        // layer is integrated. Filesystem-level protection relies on 0600
+        // file permissions and user-session isolation.
         let data_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let _key = crate::crypto::generate_db_key(&data_dir)
             .context("failed to initialize database encryption key")?;
-        // Full file-level encryption requires an encrypted VFS or SQLCipher.
-        // This implementation provides key management and the crypto primitives.
-        // For production, consider using SQLCipher or an encrypted filesystem.
-        let encrypted = true;
+        let encrypted = false;
 
         Ok(Self {
             pool,
@@ -184,14 +189,22 @@ impl Database {
         self.encrypted
     }
 
-    /// Returns the encryption scheme in use.
+    /// Returns the encryption status of the database.
     ///
-    /// Returns `"aes-256-gcm"` if encryption is active, `"none"` otherwise.
+    /// Returns `"key-managed (vfs-pending)"` if key management is initialized
+    /// but the database file is not encrypted at rest. Returns `"none"` if
+    /// key management is not initialized.
+    ///
+    /// **Note:** Full at-rest encryption requires a VFS-layer integration
+    /// (SQLCipher, encrypted filesystem, or custom VFS). The current
+    /// implementation provides key management and AES-256-GCM primitives
+    /// but does not encrypt the SQLite file itself. Protection relies on
+    /// 0600 file permissions and user-session isolation.
     pub fn encryption_status(&self) -> String {
         if self.encrypted {
             "aes-256-gcm".to_string()
         } else {
-            "none".to_string()
+            "key-managed (vfs-pending)".to_string()
         }
     }
 
@@ -950,450 +963,6 @@ impl Database {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Row types
-// ---------------------------------------------------------------------------
-
-/// A row from the `runs` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct RunRow {
-    /// Primary key.
-    pub id: String,
-    /// FK to repositories.
-    pub repo_id: String,
-    /// The raw command string.
-    pub command: String,
-    /// Classification label (build, test, lint, etc.) stored as text.
-    #[sqlx(rename = "classification")]
-    pub classification_str: String,
-    /// Content-addressable fingerprint of the command + context.
-    pub fingerprint: String,
-    /// Current lifecycle status stored as text.
-    #[sqlx(rename = "status")]
-    pub status_str: String,
-    /// Exit code (None while running).
-    pub exit_code: Option<i32>,
-    /// ISO 8601 timestamp when execution began.
-    pub started_at: Option<String>,
-    /// ISO 8601 timestamp when execution completed.
-    pub completed_at: Option<String>,
-    /// Wall-clock duration in milliseconds.
-    pub duration_ms: Option<i64>,
-    /// Whether this run was served from cache.
-    pub is_cached: i32,
-    /// Resource class for scheduling stored as text.
-    #[sqlx(rename = "resource_class")]
-    pub resource_class_str: String,
-    /// Path to captured stdout log.
-    pub output_path: Option<String>,
-    /// Path to captured stderr log.
-    pub error_path: Option<String>,
-}
-
-impl RunRow {
-    /// Parse the classification string into a typed enum.
-    pub fn classification(&self) -> CommandClass {
-        self.classification_str
-            .parse()
-            .unwrap_or(CommandClass::Unknown)
-    }
-
-    /// Parse the status string into a typed enum.
-    pub fn status(&self) -> RunStatus {
-        self.status_str.parse().unwrap_or(RunStatus::Queued)
-    }
-
-    /// Parse the resource class string into a typed enum.
-    pub fn resource_class(&self) -> ResourceClass {
-        self.resource_class_str
-            .parse()
-            .unwrap_or(ResourceClass::Unknown)
-    }
-
-    /// Whether the run was served from cache.
-    pub fn is_cached(&self) -> bool {
-        self.is_cached != 0
-    }
-}
-
-/// A row from the `events` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct EventRow {
-    /// Primary key.
-    pub id: String,
-    /// Kind of event stored as text.
-    #[sqlx(rename = "event_type")]
-    pub event_type_str: String,
-    /// Optional FK to runs.
-    pub run_id: Option<String>,
-    /// Optional FK to repositories.
-    pub repo_id: Option<String>,
-    /// Optional FK to agents.
-    pub agent_id: Option<String>,
-    /// Severity label.
-    pub severity: Option<String>,
-    /// Short title.
-    pub title: String,
-    /// Optional human-readable summary.
-    pub summary: Option<String>,
-    /// Optional detailed payload (JSON).
-    pub details: Option<String>,
-    /// Importance score.
-    pub importance: i32,
-    /// Whether this should trigger a notification (stored as integer).
-    pub should_notify: i32,
-    /// ISO 8601 timestamp.
-    pub created_at: String,
-}
-
-impl EventRow {
-    /// Parse the event type string into a typed enum.
-    pub fn event_type(&self) -> EventKind {
-        self.event_type_str.parse().unwrap_or(EventKind::Info)
-    }
-
-    /// Whether this should trigger a notification.
-    pub fn should_notify(&self) -> bool {
-        self.should_notify != 0
-    }
-}
-
-/// A row from the `important_events` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct ImportantEventRow {
-    /// Primary key.
-    pub id: String,
-    /// FK to the underlying event.
-    pub event_id: String,
-    /// Importance score.
-    pub importance: i32,
-    /// Category label.
-    pub category: Option<String>,
-    /// Recommended action text.
-    pub recommended_action: Option<String>,
-    /// Whether the user acknowledged this event (stored as integer).
-    pub acknowledged: i32,
-    /// ISO 8601 timestamp.
-    pub created_at: String,
-}
-
-impl ImportantEventRow {
-    /// Whether this event was acknowledged.
-    pub fn acknowledged(&self) -> bool {
-        self.acknowledged != 0
-    }
-}
-
-/// A row from the `run_cache` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct CacheEntryRow {
-    /// Primary key.
-    pub id: String,
-    /// Content fingerprint for cache lookup.
-    pub fingerprint: String,
-    /// FK to the run that produced this result.
-    pub run_id: String,
-    /// Cached exit code.
-    pub exit_code: i32,
-    /// Path to cached output log.
-    pub output_path: Option<String>,
-    /// ISO 8601 timestamp when cached.
-    pub cached_at: String,
-    /// ISO 8601 timestamp when this entry expires.
-    pub expires_at: Option<String>,
-}
-
-/// A row from the `repositories` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct RepoRow {
-    /// Primary key.
-    pub id: String,
-    /// Human-readable name.
-    pub name: String,
-    /// Absolute path to the repository root.
-    pub root: String,
-    /// Current branch name.
-    pub branch: Option<String>,
-    /// HEAD commit SHA.
-    pub head_sha: Option<String>,
-    /// Whether the working tree has uncommitted changes (stored as integer).
-    pub is_dirty: i32,
-    /// Upstream remote URL.
-    pub upstream: Option<String>,
-    /// ISO 8601 timestamp of creation.
-    pub created_at: String,
-    /// ISO 8601 timestamp of last update.
-    pub updated_at: String,
-}
-
-impl RepoRow {
-    /// Whether the working tree has uncommitted changes.
-    pub fn is_dirty(&self) -> bool {
-        self.is_dirty != 0
-    }
-}
-
-/// A row from the `agents` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct AgentRow {
-    /// Primary key.
-    pub id: String,
-    /// Agent program name (claude, codex, aider, etc.).
-    pub agent_type: String,
-    /// Optional human-readable name.
-    pub name: Option<String>,
-    /// Working directory.
-    pub cwd: Option<String>,
-    /// FK to repositories.
-    pub repo_id: Option<String>,
-    /// FK to worktrees.
-    pub worktree_id: Option<String>,
-    /// Currently executing command.
-    pub active_command: Option<String>,
-    /// ISO 8601 timestamp of last activity.
-    pub last_seen_at: String,
-    /// JSON-encoded metadata map.
-    pub metadata: Option<String>,
-}
-
-/// A row from the `leases` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct LeaseRow {
-    /// Primary key.
-    pub id: String,
-    /// FK to the agent holding the lease.
-    pub agent_id: String,
-    /// The path being claimed.
-    pub path: String,
-    /// FK to the repository.
-    pub repo_id: String,
-    /// Lease duration in seconds.
-    pub ttl_seconds: i64,
-    /// ISO 8601 timestamp when acquired.
-    pub acquired_at: String,
-    /// ISO 8601 timestamp when the lease expires.
-    pub expires_at: String,
-    /// ISO 8601 timestamp when released (None = still active).
-    pub released_at: Option<String>,
-}
-
-/// A row from the `mobile_devices` table.
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct MobileDeviceRow {
-    /// Primary key (e.g. "mob_a1b2c3d4e5f6").
-    pub id: String,
-    /// Human-readable device name.
-    pub display_name: String,
-    /// Platform: "ios", "android", etc.
-    pub platform: String,
-    /// Base64-encoded Ed25519 public key.
-    pub device_public_key: String,
-    /// JSON array of scope strings.
-    pub scopes_json: String,
-    /// ISO 8601 timestamp when registered.
-    pub created_at: String,
-    /// ISO 8601 timestamp of last API call.
-    pub last_seen_at: String,
-    /// ISO 8601 timestamp when revoked (None = active).
-    pub revoked_at: Option<String>,
-    /// Human-readable revocation reason.
-    pub revocation_reason: Option<String>,
-    /// Whether push notifications are enabled (0/1).
-    pub push_enabled: i32,
-    /// Whether relay is enabled (0/1).
-    pub relay_enabled: i32,
-    /// App version string.
-    pub app_version: Option<String>,
-    /// OS version string.
-    pub os_version: Option<String>,
-}
-
-impl MobileDeviceRow {
-    /// Whether the device has push notifications enabled.
-    pub fn push_enabled(&self) -> bool {
-        self.push_enabled != 0
-    }
-
-    /// Whether the device has relay enabled.
-    pub fn relay_enabled(&self) -> bool {
-        self.relay_enabled != 0
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Migration engine
-// ---------------------------------------------------------------------------
-
-/// Ensures the schema is at [`CURRENT_SCHEMA_VERSION`] by running any
-/// pending migrations in order.
-///
-/// Each migration runs inside an explicit SQLite transaction. The schema
-/// version is recorded with an atomic `INSERT OR REPLACE`, so a crash between
-/// the migration SQL and the version bump will roll back cleanly — the
-/// database will never be left in a half-migrated state.
-async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS _schema_version (
-            version INTEGER NOT NULL
-        )",
-    )
-    .execute(pool)
-    .await
-    .context("failed to create _schema_version table")?;
-
-    let current: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-    for v in ((current as u32) + 1)..=CURRENT_SCHEMA_VERSION {
-        // Run each migration in its own transaction for atomicity.
-        // If anything fails, the whole transaction rolls back, leaving the
-        // schema version unchanged.
-        if let Err(e) = run_migration_in_transaction(pool, v).await {
-            tracing::error!("Migration v{v} failed: {e:#}");
-            return Err(e).with_context(|| format!("failed to run migration v{v}"));
-        }
-        tracing::info!("Applied database migration v{v}");
-    }
-
-    Ok(())
-}
-
-/// Run a single migration inside a transaction: execute the migration SQL,
-/// then record the schema version, then commit. If anything fails, the entire
-/// transaction rolls back, leaving the schema version unchanged.
-async fn run_migration_in_transaction(pool: &SqlitePool, version: u32) -> anyhow::Result<()> {
-    let mut tx = pool
-        .begin()
-        .await
-        .with_context(|| format!("failed to begin transaction for migration v{version}"))?;
-
-    if let Some(migrate) = migration(version) {
-        // Transaction implements DerefMut<Target=SqliteConnection>, so
-        // &mut *tx gives us &mut SqliteConnection for the migration function.
-        #[allow(clippy::explicit_auto_deref)]
-        migrate(&mut *tx).await?;
-    }
-
-    // Atomically record the new schema version within the same transaction.
-    // Delete any previous version rows and insert the new one.
-    // This is safe because we're inside a transaction — if anything fails,
-    // the whole transaction rolls back.
-    sqlx::query("DELETE FROM _schema_version")
-        .execute(&mut *tx)
-        .await
-        .with_context(|| format!("failed to clear schema version for v{version}"))?;
-    sqlx::query("INSERT INTO _schema_version (version) VALUES (?1)")
-        .bind(version as i64)
-        .execute(&mut *tx)
-        .await
-        .with_context(|| format!("failed to record schema version v{version}"))?;
-
-    // Commit — migration + version bump are now durable together.
-    tx.commit()
-        .await
-        .with_context(|| format!("failed to commit migration v{version}"))?;
-
-    Ok(())
-}
-
-type MigrationFn = for<'a> fn(
-    &'a mut sqlx::SqliteConnection,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>,
->;
-
-/// Returns the migration function for the given schema version.
-fn migration(version: u32) -> Option<MigrationFn> {
-    match version {
-        1 => Some(migration_v1),
-        2 => Some(migration_v2),
-        _ => None,
-    }
-}
-
-/// Migration v1: create all initial tables and indexes.
-fn migration_v1(
-    conn: &mut sqlx::SqliteConnection,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
-    Box::pin(async move {
-        let stmts: &[&str] = &[
-            "CREATE TABLE repositories (id TEXT PRIMARY KEY, name TEXT NOT NULL, root TEXT NOT NULL UNIQUE, branch TEXT, head_sha TEXT, is_dirty INTEGER NOT NULL DEFAULT 0, upstream TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
-            "CREATE TABLE worktrees (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE, path TEXT NOT NULL UNIQUE, branch TEXT, head_sha TEXT, is_locked INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
-            "CREATE TABLE agents (id TEXT PRIMARY KEY, agent_type TEXT NOT NULL, name TEXT, cwd TEXT, repo_id TEXT REFERENCES repositories(id), worktree_id TEXT REFERENCES worktrees(id), active_command TEXT, last_seen_at TEXT NOT NULL, metadata TEXT)",
-            "CREATE TABLE runs (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL REFERENCES repositories(id), command TEXT NOT NULL, classification TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', exit_code INTEGER, started_at TEXT, completed_at TEXT, duration_ms INTEGER, is_cached INTEGER NOT NULL DEFAULT 0, resource_class TEXT NOT NULL DEFAULT 'unknown', output_path TEXT, error_path TEXT)",
-            "CREATE TABLE command_invocations (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), agent_id TEXT REFERENCES agents(id), repo_id TEXT NOT NULL REFERENCES repositories(id), command TEXT NOT NULL, classification TEXT NOT NULL, fingerprint TEXT NOT NULL, resource_class TEXT NOT NULL, use_shell INTEGER NOT NULL DEFAULT 1, invoked_at TEXT NOT NULL)",
-            "CREATE TABLE run_subscribers (run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE, agent_id TEXT REFERENCES agents(id), subscribed_at TEXT NOT NULL, detached_at TEXT, PRIMARY KEY (run_id, agent_id))",
-            "CREATE TABLE run_artifacts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE, artifact_type TEXT NOT NULL, path TEXT NOT NULL, size_bytes INTEGER, sha256 TEXT, created_at TEXT NOT NULL)",
-            "CREATE TABLE run_cache (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, run_id TEXT NOT NULL REFERENCES runs(id), exit_code INTEGER NOT NULL, output_path TEXT, cached_at TEXT NOT NULL, expires_at TEXT)",
-            "CREATE TABLE events (id TEXT PRIMARY KEY, event_type TEXT NOT NULL, run_id TEXT, repo_id TEXT, agent_id TEXT, severity TEXT, title TEXT, summary TEXT, details TEXT, importance INTEGER DEFAULT 0, should_notify INTEGER DEFAULT 0, created_at TEXT NOT NULL)",
-            "CREATE TABLE important_events (id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id), importance INTEGER NOT NULL, category TEXT, recommended_action TEXT, acknowledged INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)",
-            "CREATE TABLE decisions (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), decision_type TEXT NOT NULL, reason TEXT, details TEXT, model_used TEXT, decided_at TEXT NOT NULL)",
-            "CREATE TABLE leases (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id), path TEXT NOT NULL, repo_id TEXT NOT NULL REFERENCES repositories(id), ttl_seconds INTEGER NOT NULL, acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT)",
-            "CREATE TABLE model_calls (id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL, purpose TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER, cost_cents REAL, duration_ms INTEGER, created_at TEXT NOT NULL)",
-            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
-            "CREATE TABLE plugin_manifests (id TEXT PRIMARY KEY, name TEXT NOT NULL, version TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, config TEXT, installed_at TEXT NOT NULL)",
-            "CREATE INDEX idx_runs_repo_id ON runs(repo_id)",
-            "CREATE INDEX idx_runs_fingerprint ON runs(fingerprint)",
-            "CREATE INDEX idx_runs_status ON runs(status)",
-            "CREATE INDEX idx_runs_started_at ON runs(started_at)",
-            "CREATE INDEX idx_events_run_id ON events(run_id)",
-            "CREATE INDEX idx_events_repo_id ON events(repo_id)",
-            "CREATE INDEX idx_events_agent_id ON events(agent_id)",
-            "CREATE INDEX idx_events_created_at ON events(created_at)",
-            "CREATE INDEX idx_run_cache_fingerprint ON run_cache(fingerprint)",
-            "CREATE INDEX idx_leases_agent_id ON leases(agent_id)",
-            "CREATE INDEX idx_leases_path ON leases(path)",
-            "CREATE INDEX idx_agents_repo_id ON agents(repo_id)",
-        ];
-        for (i, stmt) in stmts.iter().enumerate() {
-            sqlx::query(stmt)
-                .execute(&mut *conn)
-                .await
-                .with_context(|| {
-                    format!("failed to execute migration v1 statement #{i}: {stmt}")
-                })?;
-        }
-        Ok(())
-    })
-}
-
-/// Migration v2: add mobile companion tables and indexes.
-fn migration_v2(
-    conn: &mut sqlx::SqliteConnection,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
-    Box::pin(async move {
-        let stmts: &[&str] = &[
-            "CREATE TABLE IF NOT EXISTS mobile_devices (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, platform TEXT NOT NULL, device_public_key TEXT NOT NULL, scopes_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, revoked_at TEXT, revocation_reason TEXT, push_enabled INTEGER NOT NULL DEFAULT 0, relay_enabled INTEGER NOT NULL DEFAULT 0, app_version TEXT, os_version TEXT)",
-            "CREATE TABLE IF NOT EXISTS mobile_pairing_sessions (id TEXT PRIMARY KEY, pairing_secret_hash TEXT NOT NULL, server_pubkey_fingerprint TEXT NOT NULL, requested_scopes_json TEXT NOT NULL DEFAULT '[]', expires_at TEXT NOT NULL, claimed_at TEXT, claimed_device_id TEXT, created_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS mobile_device_sessions (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, token_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE IF NOT EXISTS mobile_push_subscriptions (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, push_token TEXT NOT NULL, provider TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT)",
-            "CREATE TABLE IF NOT EXISTS mobile_notification_deliveries (id TEXT PRIMARY KEY, event_id TEXT NOT NULL, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, importance INTEGER NOT NULL, category TEXT NOT NULL, push_payload TEXT, delivered_at TEXT NOT NULL, opened_at TEXT)",
-            "CREATE TABLE IF NOT EXISTS mobile_gateway_audit_log (id TEXT PRIMARY KEY, device_id TEXT, action TEXT NOT NULL, target_type TEXT, target_id TEXT, risk_level TEXT, allowed INTEGER NOT NULL DEFAULT 0, reason TEXT, ip_address_hash TEXT, created_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS mobile_relay_sessions (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, relay_id TEXT NOT NULL, channel_id TEXT NOT NULL, established_at TEXT NOT NULL, closed_at TEXT)",
-            "CREATE TABLE IF NOT EXISTS mobile_capability_grants (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, capability TEXT NOT NULL, granted_at TEXT NOT NULL, expires_at TEXT, revoked INTEGER NOT NULL DEFAULT 0)",
-            "CREATE TABLE IF NOT EXISTS mobile_security_events (id TEXT PRIMARY KEY, device_id TEXT, event_type TEXT NOT NULL, severity TEXT NOT NULL, description TEXT NOT NULL, ip_address_hash TEXT, created_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS mobile_device_tokens (id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES mobile_devices(id) ON DELETE CASCADE, token_type TEXT NOT NULL, token_hash TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT, revoked INTEGER NOT NULL DEFAULT 0)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_devices_public_key ON mobile_devices(device_public_key)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_pairing_sessions_expires ON mobile_pairing_sessions(expires_at)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_device_sessions_device ON mobile_device_sessions(device_id)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_push_subscriptions_device ON mobile_push_subscriptions(device_id)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_gateway_audit_device ON mobile_gateway_audit_log(device_id)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_security_events_device ON mobile_security_events(device_id)",
-            "CREATE INDEX IF NOT EXISTS idx_mobile_device_tokens_device ON mobile_device_tokens(device_id)",
-        ];
-        for stmt in stmts {
-            sqlx::query(stmt)
-                .execute(&mut *conn)
-                .await
-                .context("migration v2: failed to execute statement")?;
-        }
-        Ok(())
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
